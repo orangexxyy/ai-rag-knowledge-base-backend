@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+requests
+numpy
+faiss-cpu
+rank-bm25
+openai
+langchain
+langchain-core
+langchain-deepseek
+pydantic

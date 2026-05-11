@@ -1,0 +1,39 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 环境变量与密钥
+.env
+.env.local
+*.key
+
+# 本地数据库
+*.db
+data/chat_history.db
+
+# 自动生成的索引文件
+data/chunk_index.json
+data/*.faiss
+
+# 日志文件
+*.log
+logs/
+
+# VSCode 本地配置
+.vscode/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
