@@ -14,6 +14,9 @@ from app.config import (
     USE_RERANKER,
     RERANK_CANDIDATE_K,
     RERANKER_PROVIDER,
+    LLM_PROVIDER,
+    MODEL_NAME,
+    OLLAMA_MODEL,
 )
 from app.chat_history_store import get_session_history, save_turn
 from app.query_builder import build_route_context, rebuild_retrieval_query_with_llm
@@ -24,6 +27,41 @@ from app.langchain_chains import run_chat_chain, run_rag_chain
 from app.reranker import rerank_chunks_by_llm, rerank_chunks_by_dashscope
 
 router_langchain = APIRouter()
+
+def build_answer_llm_debug(answer_generated_by_llm: bool = True) -> dict:
+    """
+    构造最终回答模型的调试信息。
+
+    注意：
+    - 这里描述的是“最终 answer 由哪个模型生成”
+    - 不代表 embedding / reranker / query rewrite 都是本地模型
+    """
+
+    # low_confidence 这类答案是系统兜底文本，不是模型生成
+    if not answer_generated_by_llm:
+        return {
+            "answer_source": "system_fallback",
+            "answer_llm_provider": None,
+            "answer_llm_model": None,
+            "answer_llm_is_local": False,
+        }
+
+    # Ollama 本地模型
+    if LLM_PROVIDER == "ollama":
+        return {
+            "answer_source": "ollama_local_model",
+            "answer_llm_provider": LLM_PROVIDER,
+            "answer_llm_model": OLLAMA_MODEL,
+            "answer_llm_is_local": True,
+        }
+
+    # 默认 DeepSeek 云端模型
+    return {
+        "answer_source": "deepseek_api",
+        "answer_llm_provider": LLM_PROVIDER,
+        "answer_llm_model": MODEL_NAME,
+        "answer_llm_is_local": False,
+    }
 
 
 @router_langchain.post("/ask_langchain")
@@ -145,6 +183,7 @@ def ask_question_langchain(request_data: AskRequest, request: Request):
                         "retriever_status": "low_confidence",
                         "answer": answer,
                     }
+                    response_data.update(build_answer_llm_debug(answer_generated_by_llm=False))
 
                     if RETURN_DEBUG_INFO:
                         response_data.update(
@@ -210,6 +249,7 @@ def ask_question_langchain(request_data: AskRequest, request: Request):
                             "intent_debug": intent_debug,
                         }
                     )
+        response_data.update(build_answer_llm_debug(answer_generated_by_llm=True))
 
         save_turn(session_id=session_id, question=question, answer=answer)
 

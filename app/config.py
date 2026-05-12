@@ -1,8 +1,8 @@
 import os
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 
 # 加载 .env 文件
-# load_dotenv()
+load_dotenv()
 
 # DeepSeek API Key
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -163,3 +163,26 @@ LLM_ROUTER_FAILED_DEFAULT_INTENT = "chat"
 # 开发和面试演示阶段建议 True
 # 生产环境建议谨慎开启，避免意外产生大量 embedding API 调用
 AUTO_REBUILD_INDEX_ON_STARTUP = True
+
+# =========================
+# LLM Provider 配置
+# =========================
+
+# 控制最终回答模型使用哪个提供方
+# 默认 deepseek，保证原项目稳定
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").lower()
+
+# DeepSeek 最终回答模型温度
+DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.2"))
+
+# Ollama 本地服务地址
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# Ollama 本地模型名，要和 ollama list 里一致
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-4b-instruct-local")
+
+# Ollama 本地模型推理参数
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.3"))
+OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.8"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))
+OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15"))

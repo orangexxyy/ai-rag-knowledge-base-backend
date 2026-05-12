@@ -4,8 +4,11 @@ requests
 numpy
 faiss-cpu
 rank-bm25
+jieba
 openai
 langchain
 langchain-core
 langchain-deepseek
+langchain-ollama
 pydantic
+python-dotenv
