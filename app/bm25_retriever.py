@@ -48,8 +48,12 @@ def find_relevant_chunks_by_bm25(
     
     scored_chunks = []
     for idx, score in enumerate(scores):
+        record = chunk_records[idx]
+
         scored_chunks.append({
-            "text": chunk_records[idx]["text"],
+            "chunk_id": record.get("chunk_id"),
+            "text": record["text"],
+            "metadata": record.get("metadata", {}),
             "bm25_score": float(score)
         })
 

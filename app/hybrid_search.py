@@ -37,13 +37,20 @@ def hybrid_search(
 
     # 3. 处理 FAISS 结果
     for rank, doc in enumerate(faiss_results):
+        chunk_id = doc.get("chunk_id")
         text = doc["text"]
+        metadata = doc.get("metadata", {})
         faiss_score = doc["faiss_score"]
         rrf_score = 1.0 / (RRF_K + rank + 1)
 
-        if text not in merged_results:
-            merged_results[text] = {
+        # 优先用 chunk_id 合并，避免不同来源的相同文本被错误合并
+        merge_key = chunk_id if chunk_id is not None else text
+
+        if merge_key not in merged_results:
+            merged_results[merge_key] = {
+                "chunk_id": chunk_id,
                 "text": text,
+                "metadata": metadata,
                 "faiss_score": faiss_score,
                 "bm25_score": None,
                 "faiss_rank": rank,
@@ -51,19 +58,26 @@ def hybrid_search(
                 "rrf_score": rrf_score * FAISS_WEIGHT,
             }
         else:
-            merged_results[text]["faiss_score"] = faiss_score
-            merged_results[text]["faiss_rank"] = rank
-            merged_results[text]["rrf_score"] += rrf_score * FAISS_WEIGHT
+            merged_results[merge_key]["faiss_score"] = faiss_score
+            merged_results[merge_key]["faiss_rank"] = rank
+            merged_results[merge_key]["rrf_score"] += rrf_score * FAISS_WEIGHT
 
     # 4. 处理 BM25 结果
     for rank, doc in enumerate(bm25_results):
+        chunk_id = doc.get("chunk_id")
         text = doc["text"]
+        metadata = doc.get("metadata", {})
         bm25_score = doc["bm25_score"]
         rrf_score = 1.0 / (RRF_K + rank + 1)
 
-        if text not in merged_results:
-            merged_results[text] = {
+        # 优先用 chunk_id 合并，避免不同来源的相同文本被错误合并
+        merge_key = chunk_id if chunk_id is not None else text
+
+        if merge_key not in merged_results:
+            merged_results[merge_key] = {
+                "chunk_id": chunk_id,
                 "text": text,
+                "metadata": metadata,
                 "faiss_score": None,
                 "bm25_score": bm25_score,
                 "faiss_rank": None,
@@ -71,9 +85,9 @@ def hybrid_search(
                 "rrf_score": rrf_score * BM25_WEIGHT,
             }
         else:
-            merged_results[text]["bm25_score"] = bm25_score
-            merged_results[text]["bm25_rank"] = rank
-            merged_results[text]["rrf_score"] += rrf_score * BM25_WEIGHT
+            merged_results[merge_key]["bm25_score"] = bm25_score
+            merged_results[merge_key]["bm25_rank"] = rank
+            merged_results[merge_key]["rrf_score"] += rrf_score * BM25_WEIGHT
 
     # 5. 补 source 字段
     for text, item in merged_results.items():

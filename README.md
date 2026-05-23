@@ -2,9 +2,24 @@
 
 ## 1. 项目简介
 
-本项目是一个基于 **FastAPI + RAG + Hybrid Retrieval + Semantic Router + DashScope Reranker + LangChain + SQLite 多轮会话 + LLM Provider 可切换** 的企业知识库问答后端项目。
+本项目是一个基于 **FastAPI + RAG + Hybrid Retrieval + Semantic Router + DashScope Reranker + LangChain + SQLite 多轮会话 + LLM Provider 可切换 + Document Ingestion Pipeline** 的企业知识库问答后端项目。
 
 项目面向企业员工手册、制度文档、审批流程、请假制度、差旅报销等内部资料场景，目标是让用户通过自然语言查询企业制度，并让系统优先基于本地知识库资料进行回答。
+
+项目不是简单调用大模型 API，而是完整实现了：
+
+```text
+企业资料入库
+→ 文档清洗
+→ metadata 传递
+→ chunk 切分
+→ embedding
+→ FAISS / BM25 混合检索
+→ Reranker 重排
+→ Prompt 组装
+→ 大模型基于资料回答
+→ debug 可解释返回
+```
 
 当前项目支持两种最终回答模型模式：
 
@@ -20,7 +35,7 @@ LLM_PROVIDER=deepseek
 → 使用 DeepSeek 云端模型生成最终 answer
 
 LLM_PROVIDER=ollama
-→ 使用 Ollama 本地 Qwen3-4B-Instruct 模型生成最终 answer
+→ 使用 Ollama 本地模型生成最终 answer
 ```
 
 注意：
@@ -42,6 +57,8 @@ Embedding、Query Rewrite、LLM Router Fallback、DashScope Reranker 等环节�
 - LLM API 调用能力
 - Embedding 与向量检索能力
 - RAG 工程链路设计能力
+- 企业资料入库与文档预处理能力
+- metadata 设计与来源追溯能力
 - 多轮会话与 SQLite 持久化能力
 - FAISS + BM25 + RRF 混合检索能力
 - DashScope qwen3-rerank 检索后重排能力
@@ -96,9 +113,401 @@ POST /ask_langchain
 
 ---
 
-## 4. 核心功能
+## 4. 企业资料入库处理链路
 
-### 4.1 普通聊天与 RAG 问答分流
+项目已从早期的：
+
+```text
+knowledge.txt
+→ chunk
+→ embedding
+→ FAISS / BM25 索引
+```
+
+升级为基础的 **Document Ingestion Pipeline**，用于模拟真实企业 RAG 项目中的资料入库、预处理、metadata 传递和索引构建流程。
+
+当前入库流程如下：
+
+```text
+原始资料
+→ Document Loader
+→ Document(text + metadata)
+→ Document Processor
+→ cleaned Document(text + metadata)
+→ Document Chunker
+→ chunk_items(text + metadata)
+→ Index Builder
+→ chunk_records(text + embedding + metadata)
+→ save chunk_index.json
+→ build FAISS index
+→ BM25 / FAISS / Hybrid Search
+→ /ask_langchain 返回命中 chunk 的 debug 信息
+```
+
+### 4.1 统一 Document 数据结构
+
+项目新增统一的 `Document` 数据结构，用于承载文档正文和元数据：
+
+```python
+Document(
+    text="文档正文内容",
+    metadata={
+        "source_file": "knowledge.txt",
+        "source_path": "data/knowledge.txt",
+        "file_type": "txt",
+        "page": None,
+        "sheet_name": None,
+        "row_number": None,
+        "section_title": None,
+        "version": None,
+        "permission_level": "internal"
+    }
+)
+```
+
+设计原因：
+
+```text
+1. 不同类型资料不能直接进入 chunk
+2. txt / PDF / Excel 等资料需要先转换成统一中间结构
+3. 后续清洗、chunk、embedding、索引构建都可以围绕 Document 处理
+4. metadata 可以用于来源追溯、debug、权限控制和版本管理
+```
+
+---
+
+### 4.2 Document Loader
+
+项目新增：
+
+```text
+app/document_loader.py
+```
+
+当前已实现：
+
+```text
+txt 文件读取
+```
+
+当前链路：
+
+```text
+data/knowledge.txt
+→ load_document()
+→ list[Document]
+```
+
+后续计划扩展：
+
+```text
+PDF → 按 page 提取文本，每页生成一个 Document
+Excel → 按 sheet / row 提取数据，每行或业务对象生成一个 Document
+```
+
+当前阶段不直接把 PDF / Excel 当成长文本处理，而是先设计统一 Document 结构，为后续多类型资料接入打基础。
+
+---
+
+### 4.3 Document Processor
+
+项目新增：
+
+```text
+app/document_processor.py
+```
+
+Document Processor 负责在 chunk 前进行基础文本清洗。
+
+当前已实现：
+
+```text
+1. 统一 Windows / Linux / Mac 换行符
+2. 去掉每行首尾空格
+3. 压缩连续空格和 tab
+4. 压缩过多空行
+5. 保留必要的段落和条款结构
+6. 清洗 text 的同时保留 metadata
+```
+
+设计原则：
+
+```text
+清理噪声，但不破坏标题、段落和条款边界。
+```
+
+原因：
+
+```text
+制度文档、员工手册、审批流程等资料通常依赖标题、自然段和条款边界。
+如果清洗时直接删除所有换行，会导致条款黏连，影响后续 chunk 和检索效果。
+```
+
+---
+
+### 4.4 Document Chunker
+
+项目新增：
+
+```text
+app/document_chunker.py
+```
+
+Document Chunker 负责将清洗后的 Document 切分为带 metadata 的 chunk_items。
+
+输入：
+
+```python
+Document(
+    text="员工手册正文...",
+    metadata={
+        "source_file": "knowledge.txt",
+        "file_type": "txt"
+    }
+)
+```
+
+输出：
+
+```python
+{
+    "text": "切分后的 chunk 文本",
+    "metadata": {
+        "source_file": "knowledge.txt",
+        "source_path": "data/knowledge.txt",
+        "file_type": "txt",
+        "page": None,
+        "sheet_name": None,
+        "row_number": None,
+        "section_title": None,
+        "version": None,
+        "permission_level": "internal",
+        "doc_index": 0,
+        "chunk_index_in_document": 0,
+        "chunk_char_length": 102
+    }
+}
+```
+
+设计原因：
+
+```text
+chunk 不应该只返回字符串 list[str]。
+企业 RAG 需要知道每个 chunk 来自哪个文件、哪一页、哪个 sheet、哪一行。
+因此 chunk 阶段必须继续传递 metadata。
+```
+
+当前 chunk 策略仍然复用项目已有的：
+
+```text
+paragraph_then_overlap
+```
+
+含义：
+
+```text
+1. 优先按自然段 / 空行 / 条款边界切分
+2. 如果单个段落过长，再使用 fixed_size + overlap 二次切分
+3. 尽量保留制度条款语义完整性
+4. 同时控制 chunk 长度，避免过长文本影响 embedding 和检索
+```
+
+---
+
+### 4.5 Index Builder 升级
+
+项目修改：
+
+```text
+app/index_builder.py
+```
+
+原始 chunk_record 结构：
+
+```python
+{
+    "chunk_id": 0,
+    "text": "chunk 文本",
+    "embedding": [...]
+}
+```
+
+升级后 chunk_record 结构：
+
+```python
+{
+    "chunk_id": 0,
+    "text": "chunk 文本",
+    "embedding": [...],
+    "metadata": {
+        "source_file": "knowledge.txt",
+        "source_path": "data/knowledge.txt",
+        "file_type": "txt",
+        "page": None,
+        "sheet_name": None,
+        "row_number": None,
+        "section_title": None,
+        "version": None,
+        "permission_level": "internal",
+        "doc_index": 0,
+        "chunk_index_in_document": 0,
+        "chunk_char_length": 102,
+        "chunk_id": 0
+    }
+}
+```
+
+设计原因：
+
+```text
+1. text 用于 embedding 和检索
+2. embedding 用于 FAISS 向量检索
+3. metadata 用于来源追溯、debug、权限控制和版本管理
+4. chunk_id 用于定位具体命中的资料片段
+```
+
+---
+
+### 4.6 Index Manager 接入新版入库链路
+
+项目修改：
+
+```text
+app/index_manager.py
+```
+
+原始建库流程：
+
+```text
+load_knowledge_text()
+→ split_text_to_chunks()
+→ build_chunk_records()
+→ save_chunk_records()
+→ build FAISS index
+```
+
+新版建库流程：
+
+```text
+load_document(KNOWLEDGE_FILE)
+→ process_documents()
+→ chunk_documents()
+→ build_chunk_records()
+→ save_chunk_records()
+→ build FAISS index
+```
+
+这样项目不再只依赖单一 `knowledge.txt → 字符串切分` 的方式，而是开始具备真实企业 RAG 项目中常见的资料入库处理链路。
+
+---
+
+### 4.7 metadata 贯穿检索链路
+
+项目已将 metadata 继续传递到检索结果中。
+
+涉及文件：
+
+```text
+app/faiss_retriever.py
+app/bm25_retriever.py
+app/hybrid_search.py
+app/routes_langchain.py
+```
+
+现在 FAISS / BM25 检索结果不仅返回：
+
+```text
+text
+score
+rank
+```
+
+还会返回：
+
+```text
+chunk_id
+metadata
+```
+
+`/ask_langchain` 的 `used_chunks_debug` 示例：
+
+```json
+{
+  "text": "请假制度条款C（事假）：事假为员工处理个人事务所使用的无薪假期。事假原则上需提前申请，紧急情况可事后补充，但需获得直属主管认可。",
+  "chunk_id": 11,
+  "metadata": {
+    "source_file": "knowledge.txt",
+    "source_path": "data/knowledge.txt",
+    "file_type": "txt",
+    "page": null,
+    "sheet_name": null,
+    "row_number": null,
+    "section_title": null,
+    "version": null,
+    "permission_level": "internal",
+    "doc_index": 0,
+    "chunk_index_in_document": 11,
+    "chunk_char_length": 64,
+    "chunk_id": 11
+  },
+  "faiss_score": 0.5854,
+  "bm25_score": 3.0983,
+  "faiss_rank": 1,
+  "bm25_rank": 1,
+  "rrf_score": 0.0163,
+  "source": "both",
+  "rerank_score": 72.48,
+  "reranker_provider": "dashscope"
+}
+```
+
+这样可以在调试和面试展示中说明：
+
+```text
+系统不仅知道命中了哪段文本，还知道这段文本来自哪个文件、什么类型、在文档中的位置。
+```
+
+---
+
+### 4.8 索引版本校验与自动重建
+
+项目新增配置：
+
+```python
+DOCUMENT_PIPELINE_VERSION = "v1"
+METADATA_SCHEMA_VERSION = "v1"
+```
+
+作用：
+
+```text
+不仅根据 knowledge_hash 判断资料内容是否变化，
+还根据文档处理流程版本和 metadata 结构版本判断是否需要重新建库。
+```
+
+解决的问题：
+
+```text
+如果只判断原始知识文件 hash，那么当 document_loader、document_processor、
+document_chunker 或 metadata 结构发生变化时，系统可能不会自动发现旧索引已经过期。
+```
+
+现在索引 meta 中会记录：
+
+```json
+{
+  "document_pipeline_version": "v1",
+  "metadata_schema_version": "v1"
+}
+```
+
+当当前配置版本与索引中保存的版本不一致时，系统会判定索引无效，并触发重新建库或提示重新建库。
+
+---
+
+## 5. 核心功能
+
+### 5.1 普通聊天与 RAG 问答分流
 
 系统不会让所有问题都进入 RAG。
 
@@ -135,7 +544,7 @@ POST /ask_langchain
 
 ---
 
-### 4.2 SQLite 多轮会话持久化
+### 5.2 SQLite 多轮会话持久化
 
 项目使用 SQLite 保存多轮对话历史。
 
@@ -164,7 +573,7 @@ POST /ask_langchain
 
 ---
 
-### 4.3 Semantic Router 语义路由
+### 5.3 Semantic Router 语义路由
 
 系统启动时会预加载 chat / rag 样本，并生成 embedding。
 
@@ -196,7 +605,7 @@ ROUTER_MARGIN
 
 ---
 
-### 4.4 LLM Router Fallback
+### 5.4 LLM Router Fallback
 
 当 Semantic Router 不确定时，系统会调用大模型做兜底判断。
 
@@ -224,7 +633,7 @@ rag
 
 ---
 
-### 4.5 route_context 与 retrieval_query 分层
+### 5.5 route_context 与 retrieval_query 分层
 
 项目明确区分：
 
@@ -265,7 +674,7 @@ retrieval_query：
 
 ---
 
-### 4.6 FAISS + BM25 + RRF 混合检索
+### 5.6 FAISS + BM25 + RRF 混合检索
 
 项目使用双轨召回：
 
@@ -291,7 +700,7 @@ RRF 按排名融合，不直接相加原始分数，避免 FAISS 分数和 BM25 
 
 ---
 
-### 4.7 DashScope qwen3-rerank 检索后重排
+### 5.7 DashScope qwen3-rerank 检索后重排
 
 Hybrid Search 会先召回候选 chunk。
 
@@ -317,7 +726,7 @@ index + relevance_score
 
 ---
 
-### 4.8 Reranker 双阈值 + 分差限制
+### 5.8 Reranker 双阈值 + 分差限制
 
 当前策略：
 
@@ -350,7 +759,7 @@ RERANK_MIN_SCORE = RERANK_PRIMARY_MIN_SCORE
 
 ---
 
-### 4.9 金额区间冲突过滤
+### 5.9 金额区间冲突过滤
 
 针对报销制度中的金额区间问题，项目增加了轻量业务规则过滤。
 
@@ -387,7 +796,7 @@ Reranker 可以判断语义相关性，
 
 ---
 
-### 4.10 low_confidence 低相关保护
+### 5.10 low_confidence 低相关保护
 
 如果进入 RAG 后，所有候选资料都低于主资料阈值，系统不会强行让大模型基于弱相关资料回答。
 
@@ -409,7 +818,7 @@ used_chunk_count = 0
 
 ---
 
-### 4.11 LangChain 增量接入
+### 5.11 LangChain 增量接入
 
 项目保留手写版接口：
 
@@ -443,7 +852,7 @@ POST /ask_langchain
 
 ---
 
-### 4.12 DeepSeek / Ollama 本地模型切换
+### 5.12 DeepSeek / Ollama 本地模型切换
 
 项目新增 LLM Provider 配置层。
 
@@ -472,17 +881,9 @@ LLM_PROVIDER=ollama
 → 最终回答模型使用本地 Ollama 模型
 ```
 
-本地模型示例：
-
-```text
-qwen3-4b-instruct-local
-```
-
-该模型由 Ollama 加载本地 GGUF 文件得到，用于验证本地模型部署、本地模型调用和基础推理参数调优。
-
 ---
 
-### 4.13 模型来源 debug 字段
+### 5.13 模型来源 debug 字段
 
 为了让演示时能直观看出当前 answer 是由哪个模型生成，接口返回中新增：
 
@@ -528,7 +929,7 @@ answer_llm_is_local
 
 ---
 
-## 5. 技术栈
+## 6. 技术栈
 
 ```text
 Python
@@ -545,11 +946,14 @@ LangChain
 Ollama
 Qwen3-4B-Instruct GGUF
 python-dotenv
+jieba
+rank-bm25
+requests
 ```
 
 ---
 
-## 6. 项目结构示例
+## 7. 项目结构示例
 
 ```text
 rag_project/
@@ -571,10 +975,19 @@ rag_project/
 │  ├─ bm25_retriever.py
 │  ├─ reranker.py
 │  ├─ knowledge.py
+│  ├─ document_models.py
+│  ├─ document_loader.py
+│  ├─ document_processor.py
+│  ├─ document_chunker.py
 │  ├─ index_builder.py
 │  ├─ index_manager.py
 │  ├─ chat_history_store.py
 │  └─ utils.py
+├─ scripts/
+│  ├─ test_document_loader.py
+│  ├─ test_document_processor.py
+│  ├─ test_document_chunker.py
+│  └─ test_index_builder_metadata.py
 ├─ data/
 │  ├─ knowledge.txt
 │  ├─ chunk_index.json
@@ -588,11 +1001,18 @@ rag_project/
 └─ test_cases.md
 ```
 
+说明：
+
+```text
+knowledge.py 当前仍保留，用于复用已有 chunk 切分函数。
+后续可进一步将 chunk 相关函数迁移到 chunking.py 或 document_chunker.py 中。
+```
+
 ---
 
-## 7. 环境准备
+## 8. 环境准备
 
-### 7.1 Python 版本
+### 8.1 Python 版本
 
 推荐：
 
@@ -624,7 +1044,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ---
 
-### 7.2 安装 Python 依赖
+### 8.2 安装 Python 依赖
 
 ```powershell
 pip install -r requirements.txt
@@ -653,7 +1073,7 @@ requests
 
 ---
 
-### 7.3 安装 Ollama
+### 8.3 安装 Ollama
 
 如果需要使用本地模型，需要先安装 Ollama。
 
@@ -682,76 +1102,6 @@ Ollama is running
 ```
 
 说明 Ollama 服务已启动。
-
----
-
-## 8. 本地模型准备
-
-当前本地模型示例：
-
-```text
-qwen3-4b-instruct-local
-```
-
-推荐使用 Instruct / non-thinking 版本，避免输出 `<think>` 或出现文本续写问题。
-
-示例流程：
-
-```text
-1. 下载 Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-2. 保存到 D:\AIModels\qwen3-4b-instruct\
-3. 创建 Modelfile
-4. 使用 ollama create 导入模型
-```
-
-示例 Modelfile：
-
-```dockerfile
-FROM D:/AIModels/qwen3-4b-instruct/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}"""
-
-SYSTEM """
-你是一个本地运行的中文 AI 助手。
-请直接回答用户当前问题。
-不要输出思考过程。
-不要模拟多轮对话。
-不要续写新的用户问题。
-不要重复。
-如果用户要求三点回答，就只输出三点。
-如果用户要求一句话回答，就只输出一句话。
-"""
-
-PARAMETER temperature 0.3
-PARAMETER top_p 0.8
-PARAMETER top_k 20
-PARAMETER repeat_penalty 1.15
-PARAMETER num_predict 512
-
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|endoftext|>"
-PARAMETER stop "<|im_start|>"
-```
-
-导入模型：
-
-```powershell
-cd D:\AIModels\qwen3-4b-instruct
-ollama create qwen3-4b-instruct-local -f Modelfile
-```
-
-验证模型：
-
-```powershell
-ollama list
-ollama run qwen3-4b-instruct-local "请用三点说明 FastAPI 的作用。"
-ollama run qwen3-4b-instruct-local "只回答“收到”两个字。"
-```
 
 ---
 
@@ -870,7 +1220,7 @@ data/chunk_index.json
 data/chunk_index.faiss
 ```
 
-如果希望演示时开箱即用，也可以保留测试索引文件。根据你的 GitHub 展示策略决定。
+如果希望演示时开箱即用，也可以保留测试索引文件。根据 GitHub 展示策略决定。
 
 ---
 
@@ -885,7 +1235,35 @@ cd D:\software\Code\rag_project
 
 ---
 
-### 10.2 启动 FastAPI
+### 10.2 重建索引
+
+如果修改了以下内容，建议重建索引：
+
+```text
+1. data/knowledge.txt 内容
+2. chunk 策略
+3. embedding 模型
+4. document_loader / document_processor / document_chunker 逻辑
+5. metadata 结构
+6. DOCUMENT_PIPELINE_VERSION
+7. METADATA_SCHEMA_VERSION
+```
+
+手动重建：
+
+```powershell
+python -c "from app.index_manager import build_and_save_chunk_index; build_and_save_chunk_index()"
+```
+
+也可以通过接口：
+
+```text
+POST /rebuild_index
+```
+
+---
+
+### 10.3 启动 FastAPI
 
 ```powershell
 uvicorn app.main:app --reload
@@ -899,7 +1277,7 @@ http://127.0.0.1:8000/docs
 
 ---
 
-### 10.3 DeepSeek 模式启动
+### 10.4 DeepSeek 模式启动
 
 `.env`：
 
@@ -926,7 +1304,7 @@ uvicorn app.main:app --reload
 
 ---
 
-### 10.4 Ollama 本地模型模式启动
+### 10.5 Ollama 本地模型模式启动
 
 先确认 Ollama 正常：
 
@@ -994,7 +1372,21 @@ POST /rebuild_index
 GET /index_info
 ```
 
-如果启动时报索引缺失或索引无效，需要先重建索引。
+返回内容包括：
+
+```text
+embedding_model
+knowledge_file
+chunk_method
+document_pipeline_version
+metadata_schema_version
+chunk_count
+build_time
+knowledge_hash
+index_status
+```
+
+如果启动时报索引缺失、索引无效、处理流程版本不匹配或 metadata 结构版本不匹配，需要先重建索引。
 
 ---
 
@@ -1032,6 +1424,24 @@ used_chunk_count
 history_messages
 used_chunks_debug
 intent_debug
+error
+```
+
+其中 `used_chunks_debug` 会包含：
+
+```text
+chunk_id
+text
+metadata
+faiss_score
+bm25_score
+faiss_rank
+bm25_rank
+rrf_score
+source
+rerank_score
+rerank_reason
+reranker_provider
 ```
 
 ---
@@ -1041,7 +1451,7 @@ intent_debug
 手写版接口。
 
 保留用于展示底层 RAG 理解。  
-最新的 LangChain、本地模型来源字段、DashScope reranker 和 low_confidence 主要推荐在 `/ask_langchain` 中演示。
+最新的 LangChain、本地模型来源字段、DashScope reranker、metadata debug 和 low_confidence 主要推荐在 `/ask_langchain` 中演示。
 
 ---
 
@@ -1055,6 +1465,8 @@ intent_debug
 embedding_model
 knowledge_file
 chunk_method
+document_pipeline_version
+metadata_schema_version
 chunk_count
 build_time
 knowledge_hash
@@ -1073,7 +1485,9 @@ index_status
 1. knowledge.txt 修改后
 2. chunk 策略修改后
 3. embedding 模型修改后
-4. 索引文件缺失或损坏后
+4. 文档处理流程版本变化后
+5. metadata 结构版本变化后
+6. 索引文件缺失或损坏后
 ```
 
 ---
@@ -1117,7 +1531,9 @@ router_margin
 常见字段：
 
 ```text
+chunk_id
 text
+metadata
 faiss_score
 bm25_score
 faiss_rank
@@ -1127,6 +1543,26 @@ source
 rerank_score
 rerank_reason
 reranker_provider
+```
+
+metadata 示例：
+
+```json
+{
+  "source_file": "knowledge.txt",
+  "source_path": "data/knowledge.txt",
+  "file_type": "txt",
+  "page": null,
+  "sheet_name": null,
+  "row_number": null,
+  "section_title": null,
+  "version": null,
+  "permission_level": "internal",
+  "doc_index": 0,
+  "chunk_index_in_document": 11,
+  "chunk_char_length": 64,
+  "chunk_id": 11
+}
 ```
 
 ---
@@ -1196,11 +1632,40 @@ intent = rag
 retriever_status = matched
 reference_text 命中事假条款
 answer 根据资料回答
+used_chunks_debug 中包含 chunk_id 和 metadata
 ```
 
 ---
 
-### 14.3 金额区间过滤：500元以下
+### 14.3 metadata 来源追溯测试
+
+请求：
+
+```json
+{
+  "question": "事假怎么请？",
+  "session_id": "demo_metadata_001"
+}
+```
+
+重点观察：
+
+```text
+used_chunks_debug[0].chunk_id
+used_chunks_debug[0].metadata.source_file
+used_chunks_debug[0].metadata.file_type
+used_chunks_debug[0].metadata.chunk_index_in_document
+```
+
+预期：
+
+```text
+metadata 能显示命中 chunk 来自 knowledge.txt，file_type 为 txt。
+```
+
+---
+
+### 14.4 金额区间过滤：500元以下
 
 请求：
 
@@ -1220,7 +1685,7 @@ answer 根据资料回答
 
 ---
 
-### 14.4 金额区间过滤：500-2000元
+### 14.5 金额区间过滤：500-2000元
 
 请求：
 
@@ -1239,7 +1704,7 @@ answer 根据资料回答
 
 ---
 
-### 14.5 金额区间过滤：超过2000元
+### 14.6 金额区间过滤：超过2000元
 
 请求：
 
@@ -1258,7 +1723,7 @@ answer 根据资料回答
 
 ---
 
-### 14.6 多轮 Query Rewrite
+### 14.7 多轮 Query Rewrite
 
 第一轮：
 
@@ -1287,7 +1752,7 @@ reference_text 只保留超过2000元条款
 
 ---
 
-### 14.7 无历史模糊问题
+### 14.8 无历史模糊问题
 
 请求：
 
@@ -1308,7 +1773,7 @@ answer 追问用户补充具体情况
 
 ---
 
-### 14.8 低相关资料保护
+### 14.9 低相关资料保护
 
 请求：
 
@@ -1331,7 +1796,7 @@ answer_source = system_fallback
 
 ---
 
-### 14.9 本地模型切换测试
+### 14.10 本地模型切换测试
 
 `.env`：
 
@@ -1361,7 +1826,7 @@ LLM_PROVIDER=ollama
 
 ---
 
-### 14.10 DeepSeek 模型切换测试
+### 14.11 DeepSeek 模型切换测试
 
 `.env`：
 
@@ -1391,26 +1856,97 @@ LLM_PROVIDER=deepseek
 
 ---
 
-## 15. 当前限制
+## 15. 当前已实现范围
 
-当前项目仍是求职展示型 Demo，不是生产级系统。
+已实现：
 
-限制包括：
-
-1. 知识库主要是测试资料。
-2. SQLite 是本地单机持久化。
-3. 没有用户登录、权限、文档 ACL。
-4. 没有生产级日志、监控、告警。
-5. 没有真实 PDF / Word / 表格解析。
-6. 没有自动化测试框架，目前以手动接口测试样本为主。
-7. DashScope embedding 和 reranker 是外部 API，会有网络延迟和调用成本。
-8. 当前只支持最终回答模型切换为本地 Ollama，不代表全链路本地化。
-9. `/ask` 与 `/ask_langchain` 两条链路并存，最新能力主要推荐在 `/ask_langchain` 演示。
-10. 本地小模型效果受模型版本、量化方式、chat template、stop token 和推理参数影响。
+```text
+1. FastAPI + RAG 企业知识库问答接口
+2. SQLite 多轮会话持久化
+3. 明显 chat 规则 + Semantic Router + LLM Router Fallback
+4. route_context / retrieval_query 分层
+5. Query Rewrite 支持多轮短追问
+6. FAISS + BM25 + RRF 混合检索
+7. DashScope qwen3-rerank 检索后重排
+8. Reranker 双阈值 + 分差限制
+9. 金额区间冲突过滤
+10. low_confidence 低相关资料保护
+11. LangChain 增量接入最终回答链
+12. DeepSeek / Ollama 最终回答模型切换
+13. answer 模型来源 debug 字段
+14. 统一 Document 数据结构
+15. txt 文件进入新版 Document Pipeline
+16. chunk 前基础文本清洗
+17. chunk 后继续保留 metadata
+18. chunk_records 保存 text、embedding、metadata
+19. 正式建库流程接入 Document Loader / Processor / Chunker
+20. FAISS / BM25 / Hybrid Search 检索结果保留 metadata
+21. /ask_langchain 的 used_chunks_debug 返回 chunk_id 和 metadata
+22. index meta 增加 document_pipeline_version 和 metadata_schema_version
+23. 处理逻辑或 metadata 结构变化时，可以通过版本号触发索引失效和重新建库
+```
 
 ---
 
-## 16. 项目亮点
+## 16. 当前限制
+
+当前项目仍是求职展示型 Demo，不是生产级企业知识库系统。
+
+当前限制包括：
+
+```text
+1. 当前只完成 txt 文件进入新版入库链路
+2. PDF Loader 尚未实现
+3. Excel Loader 尚未实现
+4. OCR 尚未实现
+5. 复杂 PDF 表格结构还原尚未实现
+6. Excel 合并单元格、复杂多表头处理尚未实现
+7. 权限过滤目前只保留 permission_level 字段，尚未真正做用户权限控制
+8. 文档版本管理目前只保留 version 字段，尚未实现多版本文档过滤
+9. 最终自然语言回答中尚未展示来源页码 / sheet / row
+10. 当前 metadata 主要用于 debug 展示和后续扩展基础
+11. SQLite 是本地单机持久化
+12. DashScope embedding 和 reranker 是外部 API，会有网络延迟和调用成本
+13. 当前只支持最终回答模型切换为本地 Ollama，不代表全链路本地化
+14. `/ask` 与 `/ask_langchain` 两条链路并存，最新能力主要推荐在 `/ask_langchain` 演示
+```
+
+---
+
+## 17. 后续扩展计划
+
+下一阶段计划补充：
+
+```text
+1. PDF Loader
+   - 文本型 PDF 按 page 提取文本
+   - 每页生成一个 Document
+   - metadata.page 生效
+   - 复用现有 Processor / Chunker / Index Builder / Retriever
+
+2. Excel Loader
+   - 按 sheet 读取
+   - 按 row 或业务对象转成自然语言文本
+   - metadata.sheet_name / row_number 生效
+   - 避免把 Excel 简单当成长文本处理
+
+3. 来源展示
+   - 在最终回答中展示 source_file
+   - PDF 展示 page
+   - Excel 展示 sheet_name 和 row_number
+
+4. 权限与版本扩展
+   - 基于 permission_level 做检索前过滤
+   - 基于 version / effective_date 做版本管理
+
+5. 自动化测试
+   - 将现有手动 test_cases 逐步沉淀为 pytest
+   - 验证 chat/rag 分流、RAG 命中、low_confidence、metadata 返回等关键链路
+```
+
+---
+
+## 18. 项目亮点
 
 可以在简历 / 面试中提炼为：
 
@@ -1426,13 +1962,16 @@ LLM_PROVIDER=deepseek
 10. 使用 low_confidence 避免弱相关资料硬答。
 11. 使用 LangChain 增量接入最终回答链。
 12. 支持 DeepSeek 云端模型 / Ollama 本地模型切换。
-13. 使用 Qwen3-4B-Instruct GGUF + Ollama 完成本地模型部署验证。
-14. 通过 .env 管理模型提供方和推理参数，避免硬编码。
-15. 返回完整 debug 字段，便于解释路由、检索、重排和模型来源。
+13. 通过 .env 管理模型提供方和推理参数，避免硬编码。
+14. 返回完整 debug 字段，便于解释路由、检索、重排和模型来源。
+15. 新增基础 Document Ingestion Pipeline，模拟企业资料入库处理流程。
+16. 将 txt 资料转换为统一 Document，并在清洗、chunk、索引和检索中保留 metadata。
+17. 支持在 used_chunks_debug 中查看命中 chunk 的来源文件、文件类型和文档内位置。
+18. 增加 document_pipeline_version / metadata_schema_version，解决处理逻辑变化但原始资料 hash 不变时旧索引不失效的问题。
 
 ---
 
-## 17. 项目表达版本
+## 19. 项目表达版本
 
 ```text
 我做了一个基于 FastAPI 的 RAG 企业知识库问答后端项目。它不是简单调用大模型 API，而是完整实现了从用户请求进入、chat/rag 分流、多轮历史管理、Query Rewrite、混合检索、reranker 重排到最终回答的链路。
@@ -1443,13 +1982,63 @@ Router 方面，我先用明显 chat 规则处理问候和礼貌收尾，再用�
 
 Reranker 方面，我接入了阿里云百炼 qwen3-rerank。接入后我发现专门 rerank API 更偏语义相关性排序，对金额区间这类精确业务条件仍然需要后处理，所以增加了主资料阈值、补充资料阈值、分差限制和金额区间冲突过滤。
 
-另外，我给项目补充了 LLM Provider 配置层，支持通过 .env 在 DeepSeek 云端模型和 Ollama 本地模型之间切换最终回答模型。本地模式下使用 Ollama 加载 Qwen3-4B-Instruct GGUF 模型，并通过 LangChain ChatOllama 接入回答链路。接口返回中会展示 answer_llm_provider、answer_llm_model 和 answer_llm_is_local，方便演示当前回答来源。
+资料入库方面，我把原来的 knowledge.txt 单文件 RAG Demo，升级成了一个基础的企业资料入库链路。现在项目中新增了 Document Loader、Document Processor 和 Document Chunker。Loader 负责把原始资料转换成统一 Document；Processor 负责清洗文本但保留 metadata；Chunker 负责按当前 chunk 策略切分文本，同时让每个 chunk 继承原始 Document 的 metadata。
+
+Index Builder 现在会把 text、embedding 和 metadata 一起写入 chunk_records。检索命中后，FAISS / BM25 / Hybrid Search 也会继续保留 metadata，并在 /ask_langchain 的 used_chunks_debug 中返回。这样系统不仅能回答问题，还能解释命中的资料来自哪个文件、什么类型、在文档中的位置。
+
+另外，我给项目补充了 LLM Provider 配置层，支持通过 .env 在 DeepSeek 云端模型和 Ollama 本地模型之间切换最终回答模型。接口返回中会展示 answer_llm_provider、answer_llm_model 和 answer_llm_is_local，方便演示当前回答来源。
 ```
 
 ---
 
-## 18. 一句话总结
+## 20. 准确表述与避免夸大
+
+可以说：
 
 ```text
-这是一个基于 FastAPI 的企业知识库 RAG 问答后端项目，已实现明显 chat 规则兜底、Semantic Router、LLM Router Fallback、SQLite 多轮会话、Query Rewrite、FAISS + BM25 + RRF 混合检索、DashScope qwen3-rerank 检索后重排、双阈值与分差过滤、金额区间冲突过滤、low_confidence 低相关资料保护、LangChain 增量接入、DeepSeek / Ollama 最终回答模型切换和调试可解释化链路，可用于展示 AI 应用开发 / 大模型应用开发中的 RAG 工程实践能力。
+当前项目已实现基础 Document Ingestion Pipeline，并支持 txt 文件进入新版入库链路。
+```
+
+可以说：
+
+```text
+metadata 已经贯穿建库、检索和 debug 返回，为后续 PDF / Excel 来源追溯打基础。
+```
+
+可以说：
+
+```text
+项目支持最终回答模型在 DeepSeek 云端模型和 Ollama 本地模型之间切换。
+```
+
+不要说：
+
+```text
+项目已经完整支持 PDF / Excel 文档解析。
+```
+
+不要说：
+
+```text
+项目已经实现生产级权限控制和文档版本管理。
+```
+
+不要说：
+
+```text
+项目已经全链路本地化。
+```
+
+更准确的说法是：
+
+```text
+PDF / Excel Loader、OCR、复杂表格结构还原、权限过滤和版本管理是后续可扩展方向。
+```
+
+---
+
+## 21. 一句话总结
+
+```text
+这是一个基于 FastAPI 的企业知识库 RAG 问答后端项目，已实现 Document Ingestion Pipeline、metadata 贯穿建库与检索、chat/rag 分流、SQLite 多轮会话、Query Rewrite、FAISS + BM25 + RRF 混合检索、DashScope qwen3-rerank 检索后重排、低相关保护、LangChain 增量接入、DeepSeek / Ollama 最终回答模型切换和调试可解释化链路，可用于展示 AI 应用开发 / 大模型应用开发中的 RAG 工程实践能力。
 ```

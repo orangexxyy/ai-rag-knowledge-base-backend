@@ -46,6 +46,8 @@ def get_index_info():
                 "build_time": meta.get("build_time"),
                 "knowledge_hash": meta.get("knowledge_hash"),
                 "index_status": get_index_status(CHUNK_INDEX_FILE),
+                "document_pipeline_version": meta.get("document_pipeline_version"),
+                "metadata_schema_version": meta.get("metadata_schema_version"),
             },
         )
 

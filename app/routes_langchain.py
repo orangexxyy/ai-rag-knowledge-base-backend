@@ -28,6 +28,7 @@ from app.reranker import rerank_chunks_by_llm, rerank_chunks_by_dashscope
 
 router_langchain = APIRouter()
 
+
 def build_answer_llm_debug(answer_generated_by_llm: bool = True) -> dict:
     """
     构造最终回答模型的调试信息。
@@ -171,7 +172,7 @@ def ask_question_langchain(request_data: AskRequest, request: Request):
                 else:
                     # 未知 provider 时，退回原始 top_k，避免接口直接挂掉
                     filtered_chunks = relevant_chunks[:TOP_K]
-                    
+
                 if not filtered_chunks:
                     answer = "资料中没有找到足够相关的内容，建议你补充更具体的问题。"
 
@@ -183,7 +184,9 @@ def ask_question_langchain(request_data: AskRequest, request: Request):
                         "retriever_status": "low_confidence",
                         "answer": answer,
                     }
-                    response_data.update(build_answer_llm_debug(answer_generated_by_llm=False))
+                    response_data.update(
+                        build_answer_llm_debug(answer_generated_by_llm=False)
+                    )
 
                     if RETURN_DEBUG_INFO:
                         response_data.update(
@@ -226,6 +229,8 @@ def ask_question_langchain(request_data: AskRequest, request: Request):
                             "used_chunks_debug": [
                                 {
                                     "text": item["text"],
+                                    "chunk_id": item.get("chunk_id"),
+                                    "metadata": item.get("metadata", {}),
                                     "faiss_score": item.get("faiss_score"),
                                     "bm25_score": item.get("bm25_score"),
                                     "faiss_rank": (

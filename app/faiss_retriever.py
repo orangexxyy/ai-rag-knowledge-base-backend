@@ -50,8 +50,12 @@ def find_relevant_chunks_by_faiss(
         if chunk_idx == -1:
             continue
 
+        record = chunk_records[chunk_idx]
+
         scored_chunks.append({
-            "text": chunk_records[chunk_idx]["text"],
+            "chunk_id": record.get("chunk_id"),
+            "text": record["text"],
+            "metadata": record.get("metadata", {}),
             "faiss_score": float(distances[0][i])
         })
 
