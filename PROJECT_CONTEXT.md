@@ -1,20 +1,56 @@
-# RAG 项目当前阶段总结 - 2026-05-23
+# RAG 项目当前阶段总结 - 2026-05-25
 
-## 当前阶段目标
+## 1. 当前阶段目标
 
-本阶段目标是补齐企业 RAG 项目中的资料入库处理能力，让项目从单一 `knowledge.txt → chunk → embedding` 的 Demo，升级为具备基础 Document Ingestion Pipeline 的企业知识库 RAG 后端项目。
+当前阶段目标是把企业知识库 RAG 项目从早期的：
 
-## 已完成能力
+```text
+单一 knowledge.txt
+→ chunk
+→ embedding
+→ index
+```
 
-### 1. 统一 Document 数据结构
+升级为更接近真实企业项目的：
 
-新增：
+```text
+资料目录
+→ txt / PDF 批量读取
+→ 统一 Document(text + metadata)
+→ 通用清洗
+→ 根据资料结构选择 chunk 策略
+→ embedding
+→ FAISS / BM25 / RRF
+→ Reranker
+→ 大模型回答
+→ 来源可追溯 debug
+```
+
+本阶段重点不是追求复杂框架，而是补齐真实企业 RAG 中更常见、面试更容易被追问的能力：
+
+```text
+资料入库
+PDF 文本解析
+metadata 设计
+chunk 策略
+资料目录扫描
+索引版本校验
+来源追溯
+```
+
+---
+
+## 2. 当前已完成能力
+
+### 2.1 统一 Document 数据结构
+
+已实现：
 
 ```text
 app/document_models.py
 ```
 
-定义统一 `Document`：
+核心结构：
 
 ```python
 Document(
@@ -33,54 +69,113 @@ Document(
 )
 ```
 
-作用：
+理解重点：
 
 ```text
-让 txt / PDF / Excel 等不同来源资料先统一转换成 Document，再进入清洗、chunk、embedding 和索引构建流程。
+Document 不只是用于溯源。
+Document 是企业 RAG 入库流程的统一中间结构。
+txt / PDF / 后续 Excel 都要先转成 Document，再进入清洗、chunk、embedding、index。
 ```
 
 ---
 
-### 2. Document Loader
+### 2.2 txt Loader
 
-新增：
-
-```text
-app/document_loader.py
-```
-
-当前已支持：
+已实现：
 
 ```text
 txt 文件读取
 ```
 
-当前链路：
+特点：
 
 ```text
-data/knowledge.txt
-→ load_document()
-→ list[Document]
-```
-
-后续计划扩展：
-
-```text
-PDF → 按 page 生成 Document
-Excel → 按 sheet / row 生成 Document
+使用 open() 读取
+通常整个 txt 文件生成 1 个 Document
+metadata.file_type = txt
+metadata.page = None
 ```
 
 ---
 
-### 3. Document Processor
+### 2.3 文本型 PDF Loader
 
-新增：
+已实现：
 
 ```text
-app/document_processor.py
+文本型 PDF 读取
+按 page 生成 Document
+metadata.page 生效
 ```
 
-当前实现最小文本清洗：
+特点：
+
+```text
+使用 pypdf.PdfReader
+PDF 每一页生成一个 Document
+metadata.file_type = pdf
+metadata.page 从 1 开始
+```
+
+设计原因：
+
+```text
+PDF 命中后需要追溯到具体页码。
+如果整份 PDF 合成一个 Document，后续只能知道来源文件，无法知道第几页。
+```
+
+当前限制：
+
+```text
+扫描型 PDF OCR 未实现
+复杂表格结构还原未实现
+多栏版面恢复未实现
+```
+
+---
+
+### 2.4 资料目录扫描
+
+已实现：
+
+```text
+load_documents_from_dir(KNOWLEDGE_DIR)
+```
+
+当前资料目录：
+
+```text
+data/raw_docs/
+```
+
+支持：
+
+```text
+.txt
+.pdf
+```
+
+已验证：
+
+```text
+employee_handbook_sample.pdf → 3 页 → 3 个 Document
+knowledge.txt → 1 个 Document
+it_support_policy_sample.pdf → 多页 PDF Document
+```
+
+核心理解：
+
+```text
+目录扫描不是重新写 RAG 流程。
+目录扫描只是把多个文件统一读取成 list[Document]。
+后续 Processor / Chunker / Index Builder 都可以复用。
+```
+
+---
+
+### 2.5 Document Processor
+
+已实现通用清洗：
 
 ```text
 统一换行符
@@ -93,89 +188,147 @@ app/document_processor.py
 设计原则：
 
 ```text
-清理噪声，但不破坏标题、段落和条款边界。
+通用、保守，不轻易破坏文档结构。
+```
+
+重要理解：
+
+```text
+PDF 可能出现 “直属主\n管” 这种行内断行。
+但通用 Processor 不适合无差别删除所有单换行。
+因为对 txt / Excel 转文本来说，单换行可能本身代表结构。
 ```
 
 ---
 
-### 4. Document Chunker
+### 2.6 Document Chunker
 
-新增：
+当前已升级为策略选择模式：
 
 ```text
-app/document_chunker.py
+Document.text
+→ 尝试 policy_clause
+→ 成功：按制度条款切
+→ 失败：退回 paragraph_then_overlap
 ```
 
-当前功能：
+当前支持两种策略：
 
 ```text
-Document(text + metadata)
-→ chunk_items(text + metadata)
-```
-
-特点：
-
-```text
-chunk 不再只是字符串，而是继续携带 metadata。
-```
-
-这样后续 PDF / Excel 接入后，可以保留：
-
-```text
-PDF page
-Excel sheet_name
-Excel row_number
-source_file
-permission_level
+policy_clause
+paragraph_then_overlap
 ```
 
 ---
 
-### 5. Index Builder 升级
+## 3. 当前新版 chunk 逻辑
 
-修改：
+### 3.1 policy_clause
+
+已从早期“请假 / 报销写死规则”升级为通用制度条款识别。
+
+可识别类似：
 
 ```text
-app/index_builder.py
+请假制度条款C（事假）：
+差旅报销制度条款B：
+账号权限制度条款C（VPN 申请）：
+资产管理制度条款D（离职归还）：
+IT支持制度条款A：
 ```
 
-原来：
+本质：
 
-```python
-{
-    "chunk_id": 0,
-    "text": "...",
-    "embedding": [...]
-}
+```text
+不是判断是否包含“事假”或“VPN”
+而是识别“xxx制度条款A/B/C”这种业务标题边界
+从当前标题切到下一个标题之前
 ```
 
-现在：
+效果：
 
-```python
-{
-    "chunk_id": 0,
-    "text": "...",
-    "embedding": [...],
-    "metadata": {...}
-}
+```text
+一页 PDF 中多个条款
+→ 切成多个独立 chunk
+→ 检索更聚焦
+→ Reranker 更容易判断相关性
 ```
-
-同时兼容旧的 `list[str]` 输入，避免一次性破坏旧链路。
 
 ---
 
-### 6. Index Manager 接入新入库链路
+### 3.2 PDF 专用切分前规整
 
-修改：
+当前逻辑：
 
 ```text
-app/index_manager.py
+如果 file_type == pdf：
+    合并单个换行，修复 PDF 行内断行
+    去掉末尾页码噪声，例如“第 2 页”
+
+如果 file_type == txt：
+    不做 PDF 专用规整，避免破坏 txt 原始结构
 ```
 
-新版正式建库流程：
+核心原则：
 
 ```text
-load_document(KNOWLEDGE_FILE)
+内容结构决定 chunk 策略。
+文件类型决定是否做专用文本规整。
+```
+
+---
+
+### 3.3 paragraph_then_overlap
+
+如果识别不到制度条款结构，仍然退回原来的通用策略：
+
+```text
+优先按段落 / 空行切
+超长文本再 fixed_size + overlap
+```
+
+这保证了旧能力不会被新策略破坏。
+
+---
+
+## 4. Index Builder
+
+当前输入：
+
+```text
+chunk_items(text + metadata)
+```
+
+输出：
+
+```text
+chunk_records(text + embedding + metadata)
+```
+
+重要理解：
+
+```text
+embedding 只基于 text 生成
+metadata 不参与 embedding
+metadata 用于来源追溯、debug、权限扩展、版本扩展
+```
+
+仍保留旧格式兼容：
+
+```text
+list[str] → 自动转换成 {"text": ..., "metadata": {}}
+```
+
+当前阶段不建议删除旧兼容，避免老测试脚本或临时调试被破坏。
+
+---
+
+## 5. Index Manager
+
+当前正式入库已经从单文件升级为目录入库：
+
+```text
+load_documents_from_dir(KNOWLEDGE_DIR)
 → process_documents()
 → chunk_documents()
 → build_chunk_records()
@@ -183,110 +336,116 @@ load_document(KNOWLEDGE_FILE)
 → build FAISS index
 ```
 
----
-
-### 7. metadata 贯穿检索与 debug 返回
-
-已修改：
+索引 meta 当前记录：
 
 ```text
-app/faiss_retriever.py
-app/bm25_retriever.py
-app/hybrid_search.py
-app/routes_langchain.py
+knowledge_source_type = dir
+knowledge_dir = data/raw_docs
+knowledge_hash_type = directory_sha256
+knowledge_hash = 资料目录 hash
+document_pipeline_version
+metadata_schema_version
 ```
 
-现在 `/ask_langchain` 的 `used_chunks_debug` 可以返回：
+目录 hash 用于判断：
 
-```json
-{
-  "chunk_id": 11,
-  "metadata": {
-    "source_file": "knowledge.txt",
-    "file_type": "txt",
-    "chunk_index_in_document": 11,
-    "chunk_char_length": 64
-  }
-}
+```text
+资料目录中支持文件新增、删除、重命名或内容变化时，旧索引需要重建。
 ```
 
 ---
 
-### 8. 索引版本校验增强
+## 6. 已验证测试结果
 
-新增配置：
-
-```python
-DOCUMENT_PIPELINE_VERSION = "v1"
-METADATA_SCHEMA_VERSION = "v1"
-```
-
-作用：
+已验证：
 
 ```text
-不仅根据 knowledge_hash 判断资料内容是否变化，也根据文档处理流程版本和 metadata 结构版本判断是否需要重建索引。
-```
-
-解决的问题：
-
-```text
-代码处理逻辑变了，但原始 knowledge.txt 没变时，旧索引不会自动失效。
+1. txt 文件可进入 Document Pipeline
+2. 文本型 PDF 可按 page 生成 Document
+3. PDF metadata.page 可传到 chunk 和 used_chunks_debug
+4. employee_handbook_sample.pdf 中“事假怎么申请？”可命中 page=2 的事假条款
+5. it_support_policy_sample.pdf 中“VPN 权限怎么申请？”可命中 page=2 的 VPN 条款
+6. 不同内容的 txt / PDF 可以进入同一个资料目录索引
+7. used_chunks_debug 可返回 source_file / file_type / page / chunk_strategy
+8. policy_clause 泛化后可以识别账号权限制度条款、资产管理制度条款等非请假类条款
 ```
 
 ---
 
-## 当前完整入库链路
+## 7. 当前完整入库链路
 
 ```text
-原始资料
-→ Document Loader
-→ Document(text + metadata)
-→ Document Processor
-→ cleaned Document(text + metadata)
-→ Document Chunker
+data/raw_docs/
+→ load_documents_from_dir()
+→ load_document(file_path)
+→ txt_loader / pdf_loader
+→ list[Document]
+→ process_documents()
+→ chunk_documents()
 → chunk_items(text + metadata)
-→ Index Builder
+→ build_chunk_records()
 → chunk_records(text + embedding + metadata)
 → save chunk_index.json
 → build FAISS index
+→ 启动时加载 FAISS / BM25 / chunk_records
+→ /ask_langchain 检索
 ```
 
 ---
 
-## 当前已实现范围
-
-已实现：
+## 8. 当前仍未实现
 
 ```text
-txt 文件进入新 Document Pipeline
-metadata 保存到 chunk_records
-metadata 传递到 FAISS / BM25 / Hybrid Search
-metadata 返回到 /ask_langchain debug 字段
-document_pipeline_version / metadata_schema_version 版本校验
-```
-
-尚未实现：
-
-```text
-PDF Loader
 Excel Loader
-OCR
-复杂表格结构还原
-权限过滤
-版本化文档管理
-来源展示到最终自然语言回答
+Word / docx Loader
+扫描型 PDF OCR
+复杂 PDF 表格结构还原
+PDF 页眉页脚智能过滤
+多栏 PDF 版面恢复
+section_heading 小标题切分
+真正的用户权限过滤
+文档版本管理
+重复资料去重
 ```
 
 ---
 
-## 面试表达
-
-可以这样讲：
+## 9. 当前最重要的面试表达
 
 ```text
-我把原来的 knowledge.txt 单文件 RAG Demo，升级成了一个基础的企业资料入库链路。现在项目中新增了 Document Loader、Document Processor 和 Document Chunker。
+我把原来的单文件 RAG Demo 升级成了资料目录入库模式。系统会扫描 data/raw_docs 目录，对 txt 和文本型 PDF 调用不同 Loader，但最终统一转换成 Document(text + metadata)。
 
-Loader 负责把原始资料转换成统一 Document；Processor 负责清洗文本但保留 metadata；Chunker 负责按当前 chunk 策略切分文本，同时让每个 chunk 继承原始 Document 的 metadata；Index Builder 再为每个 chunk 生成 embedding，并把 text、embedding、metadata 一起写入 chunk_records。
+txt 通常生成一个 Document，PDF 会按 page 生成多个 Document，并在 metadata 中保留 source_file、file_type 和 page。这样检索命中后可以追溯到 PDF 的具体页码。
 
-这样后续检索命中某个 chunk 时，不仅能拿到文本内容，还能知道来源文件、文件类型、chunk 在文档中的位置等信息。后续接入 PDF 和 Excel 时，page、sheet_name、row_number 也会沿同一套 metadata 链路传到最终 debug 返回中。
+在 chunk 阶段，我没有只用固定长度切分，而是根据内容结构选择策略。如果识别到“xxx制度条款A/B/C”这种业务结构，就按条款切分；识别不到时退回 paragraph_then_overlap。对于 PDF，因为抽取文本可能出现行内断行和页码噪声，我只在 file_type=pdf 时做轻量规整，避免影响结构正常的 txt。
+
+最终 chunk_records 会保存 text、embedding 和 metadata。检索命中后，used_chunks_debug 可以展示 source_file、file_type、page、chunk_strategy、FAISS/BM25/RRF/rerank 分数，方便解释系统为什么这样回答。
+```
+
+---
+
+## 10. 下一阶段建议
+
+下一阶段建议进入：
+
+```text
+Excel Loader
+```
+
+目标：
+
+```text
+Excel 文件
+→ 按 sheet / row 读取
+→ 每行或业务对象转成自然语言 Document
+→ metadata.sheet_name / row_number 生效
+→ 复用现有 Processor / Chunker / Index Builder
+```
+
+学习重点：
+
+```text
+为什么 Excel 不能简单当成长文本
+为什么表格要按 row 或业务对象转自然语言
+metadata.sheet_name / row_number 如何用于来源追溯
 ```
