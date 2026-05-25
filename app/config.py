@@ -16,8 +16,8 @@ MODEL_NAME = "deepseek-chat"
 
 
 # 本地知识文件路径
-# KNOWLEDGE_FILE = "data/knowledge.txt"
-KNOWLEDGE_FILE = "data/raw_docs/employee_handbook_sample.pdf"
+KNOWLEDGE_FILE = "data/knowledge.txt"
+# KNOWLEDGE_FILE = "data/raw_docs/employee_handbook_sample.pdf"
 # 企业资料目录
 # 后续 txt / pdf / excel 都可以放到这个目录里
 KNOWLEDGE_DIR = "data/raw_docs"
