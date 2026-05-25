@@ -6,16 +6,16 @@ import numpy as np  # 【新增】引入 Numpy，FAISS 底层是 C++，需要严
 from app.config import (
     CHUNK_INDEX_FILE,
     KNOWLEDGE_FILE,
+    KNOWLEDGE_DIR,
     EMBEDDING_MODEL,
     CHUNK_METHOD,
     FAISS_INDEX_FILE,
     DOCUMENT_PIPELINE_VERSION,
-    METADATA_SCHEMA_VERSION
-    
+    METADATA_SCHEMA_VERSION,
 )
 from app.index_builder import build_chunk_records
 from datetime import datetime
-from app.document_loader import load_document
+from app.document_loader import load_documents_from_dir, load_document
 from app.document_processor import process_documents
 from app.document_chunker import chunk_documents
 
@@ -65,14 +65,81 @@ def calculate_file_hash(file_path: str) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
 
+def calculate_dir_hash(dir_path: str) -> str:
+    """
+    计算资料目录的 hash。
+
+    为什么需要目录 hash？
+    - 单文件模式下，只需要检查 knowledge.txt 是否变化
+    - 目录模式下，需要检查目录里所有支持文件是否变化
+    - 文件内容变化、文件名变化、新增文件、删除文件，都应该让索引失效
+
+    当前只统计：
+    - .txt
+    - .pdf
+
+    后续支持 Excel 时，再加入 .xlsx
+    """
+
+    supported_suffixes = {".txt", ".pdf"}
+
+    dir_path_obj = os.path.abspath(dir_path)
+
+    if not os.path.exists(dir_path_obj):
+        raise FileNotFoundError(f"资料目录不存在：{dir_path}")
+
+    if not os.path.isdir(dir_path_obj):
+        raise NotADirectoryError(f"路径不是目录：{dir_path}")
+
+    hash_obj = hashlib.sha256()
+
+    file_paths = []
+
+    for root, _, files in os.walk(dir_path_obj):
+        for file_name in files:
+            file_path = os.path.join(root, file_name)
+            suffix = os.path.splitext(file_path)[1].lower()
+
+            if suffix not in supported_suffixes:
+                continue
+
+            file_paths.append(file_path)
+
+    # 排序，保证不同系统下 hash 计算顺序稳定
+    file_paths.sort()
+
+    for file_path in file_paths:
+        # 把相对路径也加入 hash
+        # 这样文件重命名 / 移动位置也会影响 hash
+        relative_path = os.path.relpath(file_path, dir_path_obj).replace("\\", "/")
+        hash_obj.update(relative_path.encode("utf-8"))
+
+        with open(file_path, "rb") as f:
+            hash_obj.update(f.read())
+
+    return hash_obj.hexdigest()
+
+
 def build_index_meta(chunk_records: list[dict]) -> dict:
     """
-    生成索引元信息
+    生成索引元信息。
+
+    当前已经从单文件知识库升级为资料目录知识库。
+    所以 meta 里记录 knowledge_dir 和目录 hash。
     """
+
     return {
         "embedding_model": EMBEDDING_MODEL,
-        "knowledge_file": KNOWLEDGE_FILE,
-        "knowledge_hash": calculate_file_hash(KNOWLEDGE_FILE),
+        # 当前知识来源类型：目录
+        "knowledge_source_type": "dir",
+        # 当前正式知识库资料目录
+        "knowledge_dir": KNOWLEDGE_DIR,
+        # 保留旧字段，方便旧接口或旧展示不至于完全空掉
+        # 但正式判断以 knowledge_dir 为准
+        "knowledge_file": None,
+        # 这里现在是“目录 hash”，不是单文件 hash
+        "knowledge_hash": calculate_dir_hash(KNOWLEDGE_DIR),
+        "knowledge_hash_type": "directory_sha256",
         "chunk_method": CHUNK_METHOD,
         "build_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "chunk_count": len(chunk_records),
@@ -124,29 +191,44 @@ def load_chunk_records(file_path: str = CHUNK_INDEX_FILE) -> list[dict]:
             f"索引模型不匹配：索引使用的是 {index_model}，当前配置是 {EMBEDDING_MODEL}，请重新建库"
         )
 
-    # 2. 检查知识文件路径
-    index_knowledge_file = meta.get("knowledge_file")
-    if index_knowledge_file != KNOWLEDGE_FILE:
+    # 2. 检查知识来源类型
+    index_source_type = meta.get("knowledge_source_type")
+
+    if index_source_type != "dir":
         raise ValueError(
-            f"索引知识文件不匹配：索引使用的是 {index_knowledge_file}，当前配置是 {KNOWLEDGE_FILE}，请重新建库"
+            f"索引知识来源类型不匹配："
+            f"索引使用的是 {index_source_type}，"
+            f"当前配置是 dir，请重新建库"
         )
 
-    # 3. 检查切块方式
+    # 3. 检查知识目录路径
+    index_knowledge_dir = meta.get("knowledge_dir")
+
+    if index_knowledge_dir != KNOWLEDGE_DIR:
+        raise ValueError(
+            f"索引知识目录不匹配："
+            f"索引使用的是 {index_knowledge_dir}，"
+            f"当前配置是 {KNOWLEDGE_DIR}，"
+            f"请重新建库"
+        )
+
+    # 4. 检查切块方式
     index_chunk_method = meta.get("chunk_method")
     if index_chunk_method != CHUNK_METHOD:
         raise ValueError(
             f"索引切块方式不匹配：索引使用的是 {index_chunk_method}，当前配置是 {CHUNK_METHOD}，请重新建库"
         )
 
-    # 4. 检查知识文件内容 hash
+    # 5. 检查资料目录内容 hash
     index_knowledge_hash = meta.get("knowledge_hash")
-    current_knowledge_hash = calculate_file_hash(KNOWLEDGE_FILE)
+    current_knowledge_hash = calculate_dir_hash(KNOWLEDGE_DIR)
 
     if index_knowledge_hash != current_knowledge_hash:
         raise ValueError(
-            "索引知识内容已变化：当前知识文件内容与建库时不一致，请重新建库"
+            "索引资料目录内容已变化：当前资料目录内容与建库时不一致，请重新建库"
         )
-    # 5. 检查文档处理流程版本
+
+    # 6. 检查文档处理流程版本
     index_document_pipeline_version = meta.get("document_pipeline_version")
 
     if index_document_pipeline_version != DOCUMENT_PIPELINE_VERSION:
@@ -157,7 +239,7 @@ def load_chunk_records(file_path: str = CHUNK_INDEX_FILE) -> list[dict]:
             f"请重新建库"
         )
 
-    # 6. 检查 metadata 结构版本
+    # 7. 检查 metadata 结构版本
     index_metadata_schema_version = meta.get("metadata_schema_version")
 
     if index_metadata_schema_version != METADATA_SCHEMA_VERSION:
@@ -184,11 +266,11 @@ def build_and_save_chunk_index(file_path: str = CHUNK_INDEX_FILE) -> list[dict]:
     6. 构建并保存 FAISS 索引
     """
 
-    print("🚀 开始新版资料入库与索引构建流程...")
+    print("🚀 开始新版资料目录入库与索引构建流程...")
 
-    # 1. 读取资料：原始文件 -> list[Document]
-    documents = load_document(KNOWLEDGE_FILE)
-    print(f"📄 Document Loader 完成，Document 数量：{len(documents)}")
+    # 1. 批量读取资料目录：data/raw_docs -> list[Document]
+    documents = load_documents_from_dir(KNOWLEDGE_DIR)
+    print(f"📁 Document Directory Loader 完成，Document 数量：{len(documents)}")
 
     # 2. 清洗资料：list[Document] -> cleaned list[Document]
     processed_documents = process_documents(documents)

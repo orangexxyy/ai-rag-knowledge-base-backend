@@ -13,9 +13,16 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com/chat/completions"
 # 模型名称
 MODEL_NAME = "deepseek-chat"
 
+
+
 # 本地知识文件路径
-KNOWLEDGE_FILE = "data/knowledge.txt"
-# app/config.py
+# KNOWLEDGE_FILE = "data/knowledge.txt"
+KNOWLEDGE_FILE = "data/raw_docs/employee_handbook_sample.pdf"
+# 企业资料目录
+# 后续 txt / pdf / excel 都可以放到这个目录里
+KNOWLEDGE_DIR = "data/raw_docs"
+
+
 
 # OpenAI embedding 模型
 OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -190,7 +197,7 @@ OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15"))
 
 # 文档入库处理流程版本
 # 当 document_loader / document_processor / document_chunker 的逻辑变化时，手动加 1
-DOCUMENT_PIPELINE_VERSION = "v2"
+DOCUMENT_PIPELINE_VERSION = "v5"
 
 # metadata 结构版本
 # 当 metadata 字段设计变化时，手动加 1

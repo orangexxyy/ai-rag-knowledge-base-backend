@@ -40,7 +40,10 @@ def get_index_info():
             message="索引信息获取成功",
             data={
                 "embedding_model": meta.get("embedding_model"),
+                "knowledge_source_type": meta.get("knowledge_source_type"),
+                "knowledge_dir": meta.get("knowledge_dir"),
                 "knowledge_file": meta.get("knowledge_file"),
+                "knowledge_hash_type": meta.get("knowledge_hash_type"),
                 "chunk_method": meta.get("chunk_method"),
                 "chunk_count": meta.get("chunk_count"),
                 "build_time": meta.get("build_time"),
@@ -87,6 +90,8 @@ def rebuild_index():
                 "chunk_method": meta.get("chunk_method"),
                 "chunk_count": meta.get("chunk_count"),
                 "build_time": meta.get("build_time"),
+                "knowledge_source_type": meta.get("knowledge_source_type"),
+                "knowledge_dir": meta.get("knowledge_dir"),
             },
         )
 
