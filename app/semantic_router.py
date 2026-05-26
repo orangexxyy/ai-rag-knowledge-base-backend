@@ -11,8 +11,6 @@ from app.config import (
 
 from app.llm_router import llm_route_fallback
 
-
-
 # =========================
 # Chat 意图样本
 # =========================
@@ -24,14 +22,12 @@ CHAT_EXAMPLES = [
     "明白了",
     "嗯嗯",
     "再见",
-
     # 普通闲聊
     "你能陪我聊聊吗",
     "讲个笑话",
     "你是谁",
     "你叫什么名字",
     "我叫什么名字",
-
     # 学习 / 情绪 / 建议类
     "我现在该先学什么",
     "我今天状态不好怎么调整",
@@ -56,7 +52,6 @@ RAG_EXAMPLES = [
     "报销金额超过2000元怎么审批",
     "差旅报销流程是什么",
     "发票提交有什么要求",
-
     # 请假制度
     "事假怎么请",
     "病假超过1天需要什么",
@@ -70,14 +65,12 @@ RAG_EXAMPLES = [
     "内部调岗怎么申请",
     "提岗需要什么流程",
     "公司内部职位变更有什么规定",
-
     # 审批 / 流程 / 员工手册
     "员工手册里关于请假的规定是什么",
     "审批流程是什么",
     "这个需要审批吗",
     "这个要提交什么材料",
     "公司制度是怎么规定的",
-
     # 多轮追问常见表达
     "那再高一点呢",
     "那病假呢",
@@ -102,6 +95,22 @@ RAG_EXAMPLES = [
     "过期药品怎么处理",
     "疑似药品不良反应怎么登记",
     "两个药品能不能一起使用资料里有没有说明",
+    # Excel / 表格资料
+    "产品入门训练营报名截止是什么时候",
+    "产品入门训练营适合哪些人报名",
+    "培训报名截止时间是什么",
+    "培训负责人是谁",
+    "新人培训怎么报名",
+    "星河会议室需要提前多久预约",
+    "星河会议室谁审批",
+    "晨光培训室怎么预约",
+    "白板笔套装怎么领取",
+    "访客胸牌离场时需要怎么处理",
+    "办公用品领用规则是什么",
+    "会议室预约规则是什么",
+    "培训报名表里是怎么规定的",
+    "办公用品领用表里怎么写的",
+    "这个表格里对应的负责人是谁",
 ]
 
 # =========================
@@ -157,6 +166,21 @@ RAG_DOMAIN_KEYWORDS = [
     "联合用药",
     "医生",
     "药师",
+    "会议室",
+    "预约",
+    "培训",
+    "训练营",
+    "报名",
+    "报名截止",
+    "负责人",
+    "适用对象",
+    "办公用品",
+    "领用",
+    "访客胸牌",
+    "白板笔",
+    "表格",
+    "台账",
+    "清单",
 ]
 
 
@@ -204,30 +228,19 @@ def build_intent_router() -> dict:
 
     chat_vectors = []
     for text in CHAT_EXAMPLES:
-        chat_vectors.append({
-            "text": text,
-            "embedding": get_embedding(text)
-        })
+        chat_vectors.append({"text": text, "embedding": get_embedding(text)})
 
     rag_vectors = []
     for text in RAG_EXAMPLES:
-        rag_vectors.append({
-            "text": text,
-            "embedding": get_embedding(text)
-        })
+        rag_vectors.append({"text": text, "embedding": get_embedding(text)})
 
     print("✅ 增强版 Semantic Router 构建完成！")
 
-    return {
-        "chat_examples": chat_vectors,
-        "rag_examples": rag_vectors
-    }
+    return {"chat_examples": chat_vectors, "rag_examples": rag_vectors}
 
 
 def get_top_matches(
-    query_embedding: list[float],
-    examples: list[dict],
-    top_n: int = 3
+    query_embedding: list[float], examples: list[dict], top_n: int = 3
 ) -> list[dict]:
     """
     找出 query_embedding 和某一类样本中最接近的 top_n 条
@@ -242,10 +255,12 @@ def get_top_matches(
 
     for item in examples:
         score = cosine_similarity(query_embedding, item["embedding"])
-        matches.append({
-            "text": item["text"],
-            "score": float(score),
-        })
+        matches.append(
+            {
+                "text": item["text"],
+                "score": float(score),
+            }
+        )
 
     matches.sort(key=lambda x: x["score"], reverse=True)
 
@@ -266,10 +281,7 @@ def calculate_intent_score(top_matches: list[dict]) -> float:
     best_score = top_matches[0]["score"]
     avg_score = sum(item["score"] for item in top_matches) / len(top_matches)
 
-    final_score = (
-        best_score * BEST_SCORE_WEIGHT
-        + avg_score * AVG_TOP_SCORE_WEIGHT
-    )
+    final_score = best_score * BEST_SCORE_WEIGHT + avg_score * AVG_TOP_SCORE_WEIGHT
 
     return float(final_score)
 
@@ -372,25 +384,20 @@ def semantic_route(route_context: str, intent_router: dict) -> tuple[str, dict]:
         "intent": intent,
         "route_strategy": route_strategy,
         "decision_reason": decision_reason,
-
         "chat_final_score": chat_final_score,
         "rag_final_score": rag_final_score,
         "score_gap_rag_minus_chat": score_gap,
-
         "best_chat_score": top_chat_matches[0]["score"] if top_chat_matches else None,
         "best_chat_example": top_chat_matches[0]["text"] if top_chat_matches else None,
         "best_rag_score": top_rag_matches[0]["score"] if top_rag_matches else None,
         "best_rag_example": top_rag_matches[0]["text"] if top_rag_matches else None,
-
         "top_chat_matches": top_chat_matches,
         "top_rag_matches": top_rag_matches,
-
         "domain_keyword_hit": domain_keyword_hit,
         "domain_keyword_detected": domain_keyword_hit,
         "fallback_used": fallback_used,
         "route_decision_source": route_decision_source,
         "llm_router_debug": llm_router_debug,
-
         "router_min_score": ROUTER_MIN_SCORE,
         "router_margin": ROUTER_MARGIN,
     }

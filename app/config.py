@@ -197,7 +197,7 @@ OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15"))
 
 # 文档入库处理流程版本
 # 当 document_loader / document_processor / document_chunker 的逻辑变化时，手动加 1
-DOCUMENT_PIPELINE_VERSION = "v5"
+DOCUMENT_PIPELINE_VERSION = "v6"
 
 # metadata 结构版本
 # 当 metadata 字段设计变化时，手动加 1

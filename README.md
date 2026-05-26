@@ -13,13 +13,16 @@
 IT 支持制度
 账号权限制度
 资产管理制度
+会议室预约表
+培训报名表
+办公用品领用表
 ```
 
 项目目标不是简单调用大模型 API，而是实现一条较完整的企业 RAG 后端链路：
 
 ```text
 企业资料目录
-→ txt / PDF 文档读取
+→ txt / PDF / Excel 文档读取
 → 统一 Document(text + metadata)
 → 文档清洗
 → 根据资料结构选择 chunk 策略
@@ -47,13 +50,14 @@ POST /ask_langchain
 
 ```text
 1. 企业资料如何入库
-2. txt / PDF 如何进入统一处理流程
+2. txt / PDF / Excel 如何进入统一处理流程
 3. 为什么需要 Document(text + metadata)
 4. 为什么 PDF 不能简单当作 txt 处理
-5. 为什么 chunk 不能只按固定长度切
-6. metadata 如何贯穿建库、检索和 debug
-7. 如何避免资料不足时大模型硬答
-8. 如何通过 debug 字段解释检索、重排和回答来源
+5. 为什么 Excel 不能简单拼成长文本处理
+6. 为什么 chunk 不能只按固定长度切
+7. metadata 如何贯穿建库、检索和 debug
+8. 如何避免资料不足时大模型硬答
+9. 如何通过 debug 字段解释检索、重排和回答来源
 ```
 
 ---
@@ -106,6 +110,7 @@ data/raw_docs/
 ├─ knowledge.txt
 ├─ employee_handbook_sample.pdf
 ├─ it_support_policy_sample.pdf
+├─ permission_matrix_sample.xlsx
 ```
 
 当前正式入库流程：
@@ -116,6 +121,7 @@ KNOWLEDGE_DIR = data/raw_docs
 → 对每个文件调用 load_document()
 → txt：生成 1 个 Document
 → PDF：按 page 生成多个 Document
+→ Excel：按 sheet / row 生成多个 Document
 → 合并为 list[Document]
 → process_documents()
 → chunk_documents()
@@ -137,12 +143,12 @@ KNOWLEDGE_DIR = data/raw_docs
 Document(
     text="文档正文内容",
     metadata={
-        "source_file": "it_support_policy_sample.pdf",
-        "source_path": "data/raw_docs/it_support_policy_sample.pdf",
-        "file_type": "pdf",
-        "page": 2,
-        "sheet_name": None,
-        "row_number": None,
+        "source_file": "permission_matrix_sample.xlsx",
+        "source_path": "data/raw_docs/permission_matrix_sample.xlsx",
+        "file_type": "xlsx",
+        "page": None,
+        "sheet_name": "培训报名表",
+        "row_number": 2,
         "section_title": None,
         "version": None,
         "permission_level": "internal"
@@ -174,6 +180,8 @@ txt 通常是线性文本
 整个 txt 文件生成 1 个 Document
 metadata.file_type = txt
 metadata.page = None
+metadata.sheet_name = None
+metadata.row_number = None
 ```
 
 ### 6.2 PDF Loader
@@ -212,9 +220,66 @@ page 级 metadata
 页眉页脚智能过滤
 ```
 
-### 6.3 资料目录 Loader
+### 6.3 Excel Loader
 
-当前新增：
+Excel 使用 `openpyxl` 读取 `.xlsx` 文件。
+
+当前最小实现规则：
+
+```text
+1. 每个 sheet 的第一行作为 header
+2. 从第二行开始读取数据行
+3. 每一行结合 header 转成自然语言文本
+4. 每一行生成一个 Document
+5. metadata 保留 sheet_name 和 row_number
+6. 空行跳过
+```
+
+示例 Excel 行：
+
+| 培训名称 | 适用对象 | 报名截止 | 负责人 |
+|---|---|---|---|
+| 产品入门训练营 | 入职30天内的新员工 | 开课前3天 | 培训专员 |
+
+转换后的 `Document.text` 示例：
+
+```text
+培训报名表记录：培训名称：产品入门训练营；适用对象：入职30天内的新员工；报名截止：开课前3天；负责人：培训专员。
+```
+
+metadata 示例：
+
+```json
+{
+  "source_file": "permission_matrix_sample.xlsx",
+  "file_type": "xlsx",
+  "page": null,
+  "sheet_name": "培训报名表",
+  "row_number": 2
+}
+```
+
+设计原因：
+
+```text
+Excel 不能简单拼成长文本。
+Excel 的语义通常来自 header + row，一行往往代表一个业务对象。
+例如培训报名记录、会议室预约规则、办公用品领用规则。
+```
+
+当前不支持：
+
+```text
+合并单元格复杂解析
+多级表头
+复杂公式重新计算
+透视表
+跨 sheet 关联
+```
+
+### 6.4 资料目录 Loader
+
+当前实现：
 
 ```python
 load_documents_from_dir(KNOWLEDGE_DIR)
@@ -225,11 +290,11 @@ load_documents_from_dir(KNOWLEDGE_DIR)
 ```text
 扫描 data/raw_docs 目录
 跳过不支持的文件
-对 .txt / .pdf 调用 load_document()
+对 .txt / .pdf / .xlsx 调用 load_document()
 把所有 Document 合并成 list[Document]
 ```
 
-这样后续新增 Excel 时，只需要扩展对应 Loader，主建库流程不用重写。
+这样后续新增 Word、更多 Excel 表格或其他资料类型时，只需要扩展对应 Loader，主建库流程不用重写。
 
 ---
 
@@ -245,12 +310,13 @@ load_documents_from_dir(KNOWLEDGE_DIR)
 3. 压缩连续空格和 tab
 4. 压缩过多空行
 5. 清洗 text 的同时保留 metadata
+6. 如果清洗后 text 为空，则跳过该 Document，并输出调试提示
 ```
 
 设计原则：
 
 ```text
-清理噪声，但不轻易破坏标题、段落和条款边界。
+清理噪声，但不轻易破坏标题、段落、条款和表格行语义。
 ```
 
 说明：
@@ -304,24 +370,6 @@ PDF 抽取后可能出现 “直属主\n管” 这类行内断行。
 从当前条款标题切到下一个条款标题之前
 ```
 
-例如 PDF 第 2 页原本可能是一个大块：
-
-```text
-账号权限制度条款A（账号开通）：...
-账号权限制度条款B（密码重置）：...
-账号权限制度条款C（VPN 申请）：...
-账号权限制度条款D（权限变更）：...
-```
-
-现在会切成多个独立 chunk：
-
-```text
-chunk 1：账号开通
-chunk 2：密码重置
-chunk 3：VPN 申请
-chunk 4：权限变更
-```
-
 ### 8.2 PDF 专用切分前规整
 
 `policy_clause` 会根据 `file_type` 做局部处理：
@@ -331,8 +379,8 @@ file_type = pdf：
     合并单个换行，减少 PDF 行内断行
     去掉末尾页码噪声，例如“第 2 页”
 
-file_type = txt：
-    不做 PDF 专用单换行合并，避免破坏 txt 原始结构
+file_type = txt / xlsx：
+    不做 PDF 专用单换行合并，避免破坏原始结构
 ```
 
 关键原则：
@@ -342,7 +390,31 @@ file_type = txt：
 文件类型决定是否做专用文本规整。
 ```
 
-### 8.3 chunk metadata
+### 8.3 Excel 与 chunk 的关系
+
+Excel 的特殊处理主要发生在 Loader 阶段：
+
+```text
+Excel sheet / row
+→ 一行转成一个自然语言 Document
+```
+
+由于每个 Excel 行 Document 通常已经是完整业务对象，并且长度较短，所以进入 Chunker 后通常会走：
+
+```text
+paragraph_then_overlap
+```
+
+并保持一行一个 chunk。
+
+可以理解为：
+
+```text
+PDF：Loader 按 page 生成 Document，Chunker 再按条款细切
+Excel：Loader 直接按 row 生成 Document，每行本身就是业务对象
+```
+
+### 8.4 chunk metadata
 
 每个 chunk 会继续保留原始 Document 的 metadata，并补充：
 
@@ -358,14 +430,15 @@ chunk_id
 
 ```json
 {
-  "source_file": "it_support_policy_sample.pdf",
-  "file_type": "pdf",
-  "page": 2,
-  "doc_index": 1,
-  "chunk_index_in_document": 2,
-  "chunk_char_length": 74,
-  "chunk_strategy": "policy_clause",
-  "chunk_id": 3
+  "source_file": "permission_matrix_sample.xlsx",
+  "file_type": "xlsx",
+  "sheet_name": "培训报名表",
+  "row_number": 2,
+  "doc_index": 9,
+  "chunk_index_in_document": 0,
+  "chunk_char_length": 124,
+  "chunk_strategy": "paragraph_then_overlap",
+  "chunk_id": 26
 }
 ```
 
@@ -418,7 +491,7 @@ list[str] → 自动转换成 {"text": ..., "metadata": {}}
 
 ```python
 KNOWLEDGE_DIR = "data/raw_docs"
-DOCUMENT_PIPELINE_VERSION = "v5"
+DOCUMENT_PIPELINE_VERSION = "v6"
 METADATA_SCHEMA_VERSION = "v1"
 ```
 
@@ -436,13 +509,57 @@ metadata_schema_version
 目录 hash 的作用：
 
 ```text
-当 data/raw_docs 中的 txt / PDF 新增、删除、重命名或内容变化时，
+当 data/raw_docs 中的 txt / PDF / Excel 新增、删除、重命名或内容变化时，
 系统可以判断旧索引已经过期，需要重新建库。
 ```
 
 ---
 
-## 11. 检索与调试字段
+## 11. Semantic Router 与资料范围同步
+
+当前 Router 使用：
+
+```text
+CHAT_EXAMPLES
+RAG_EXAMPLES
+RAG_DOMAIN_KEYWORDS
+LLM Router Fallback
+```
+
+注意：
+
+```text
+Router 不是根据文件格式分流，而是根据“用户问题像不像知识库问题”分流。
+```
+
+接入 Excel 后，补充了表格型企业资料相关的 RAG 样本和关键词，例如：
+
+```text
+产品入门训练营报名截止是什么时候
+星河会议室需要提前多久预约
+白板笔套装怎么领取
+会议室预约
+培训报名
+办公用品领用
+报名截止
+```
+
+原因：
+
+```text
+新增资料类型后，用户会产生新的问法。
+如果 Router 样本仍只覆盖请假、报销、员工手册等问题，可能会把 Excel 表格事实查询误判为 chat。
+```
+
+设计理解：
+
+```text
+知识库范围变化后，Router 样本也要同步维护。
+```
+
+---
+
+## 12. 检索与调试字段
 
 当前 `/ask_langchain` 的 `used_chunks_debug` 会返回：
 
@@ -465,30 +582,32 @@ metadata 可以用于判断：
 
 ```text
 命中的 chunk 来自哪个文件
-是 txt 还是 pdf
+是 txt、pdf 还是 xlsx
 PDF 第几页
+Excel 哪个 sheet、哪一行
 使用了哪种 chunk_strategy
 ```
 
-示例：
+Excel 命中示例：
 
 ```json
 {
-  "text": "账号权限制度条款C（VPN 申请）：员工因远程办公、出差或临时外部访问需要使用 VPN 时，应说明访问目的、预计使用时长和所需系统范围。VPN 权限默认按最小权限原则开通，到期后自动回收。",
+  "text": "培训报名表记录：培训名称：产品入门训练营；适用对象：入职30天内的新员工；报名截止：开课前3天；负责人：培训专员。",
   "metadata": {
-    "source_file": "it_support_policy_sample.pdf",
-    "file_type": "pdf",
-    "page": 2,
-    "chunk_strategy": "policy_clause"
+    "source_file": "permission_matrix_sample.xlsx",
+    "file_type": "xlsx",
+    "sheet_name": "培训报名表",
+    "row_number": 2,
+    "chunk_strategy": "paragraph_then_overlap"
   },
   "source": "both",
-  "rerank_score": 93.8
+  "rerank_score": 95.47
 }
 ```
 
 ---
 
-## 12. LLM Provider 切换
+## 13. LLM Provider 切换
 
 最终回答模型支持：
 
@@ -519,21 +638,22 @@ answer_llm_is_local
 
 ---
 
-## 13. 启动与测试
+## 14. 启动与测试
 
-### 13.1 安装依赖
+### 14.1 安装依赖
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-PDF 处理依赖：
+资料处理相关依赖：
 
 ```text
 pypdf
+openpyxl
 ```
 
-### 13.2 配置 `.env`
+### 14.2 配置 `.env`
 
 ```env
 DEEPSEEK_API_KEY=your_deepseek_api_key
@@ -545,16 +665,17 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3-4b-instruct-local
 ```
 
-### 13.3 准备资料目录
+### 14.3 准备资料目录
 
 ```text
 data/raw_docs/
 ├─ knowledge.txt
 ├─ employee_handbook_sample.pdf
 ├─ it_support_policy_sample.pdf
+├─ permission_matrix_sample.xlsx
 ```
 
-### 13.4 重建索引
+### 14.4 重建索引
 
 ```powershell
 python -c "from app.index_manager import build_and_save_chunk_index; build_and_save_chunk_index()"
@@ -566,7 +687,7 @@ python -c "from app.index_manager import build_and_save_chunk_index; build_and_s
 POST /rebuild_index
 ```
 
-### 13.5 启动服务
+### 14.5 启动服务
 
 ```powershell
 uvicorn app.main:app --reload
@@ -580,9 +701,7 @@ http://127.0.0.1:8000/docs
 
 ---
 
-## 14. 推荐测试问题
-
-### 14.1 员工手册 / txt 或员工手册 PDF
+## 15. 推荐测试问题
 
 ```json
 {
@@ -591,19 +710,6 @@ http://127.0.0.1:8000/docs
 }
 ```
 
-预期：
-
-```text
-retriever_status = matched
-reference_text 命中事假条款
-metadata.source_file = knowledge.txt 或 employee_handbook_sample.pdf
-metadata.file_type = txt 或 pdf
-如果命中 PDF，则 metadata.page = 2
-chunk_strategy = policy_clause
-```
-
-### 14.2 IT 支持 PDF
-
 ```json
 {
   "question": "VPN 权限怎么申请？",
@@ -611,54 +717,39 @@ chunk_strategy = policy_clause
 }
 ```
 
-预期：
-
-```text
-retriever_status = matched
-metadata.source_file = it_support_policy_sample.pdf
-metadata.file_type = pdf
-metadata.page = 2
-chunk_strategy = policy_clause
-reference_text 应主要包含“账号权限制度条款C（VPN 申请）”
-```
-
-### 14.3 PDF 第 1 页
-
 ```json
 {
-  "question": "打印机故障应该怎么处理？",
-  "session_id": "demo_printer_001"
+  "question": "产品入门训练营报名截止是什么时候？",
+  "session_id": "demo_excel_training_001"
 }
 ```
 
-预期：
-
-```text
-命中 it_support_policy_sample.pdf
-file_type = pdf
-page = 1
-```
-
-### 14.4 PDF 第 3 页
-
 ```json
 {
-  "question": "离职时办公设备怎么归还？",
-  "session_id": "demo_asset_return_001"
+  "question": "星河会议室需要提前多久预约？",
+  "session_id": "demo_excel_room_001"
 }
 ```
 
-预期：
+```json
+{
+  "question": "白板笔套装怎么领取？",
+  "session_id": "demo_excel_supply_001"
+}
+```
+
+预期重点观察：
 
 ```text
-命中 it_support_policy_sample.pdf
-file_type = pdf
-page = 3
+txt / PDF / Excel 都能进入 RAG
+PDF 命中时 page 不为空
+Excel 命中时 sheet_name / row_number 不为空
+used_chunks_debug 可以解释命中来源
 ```
 
 ---
 
-## 15. 当前已实现范围
+## 16. 当前已实现范围
 
 已实现：
 
@@ -674,19 +765,22 @@ page = 3
 9. 统一 Document 数据结构
 10. txt Loader
 11. 文本型 PDF Loader
-12. 资料目录扫描 load_documents_from_dir()
-13. Document Processor 通用清洗
-14. Document Chunker 支持 policy_clause + paragraph_then_overlap
-15. PDF 专用切分前规整
-16. 通用“xxx制度条款A（xxx）”识别
-17. metadata 贯穿建库、检索和 debug
-18. 目录 hash 判断资料目录变化
-19. document_pipeline_version / metadata_schema_version 索引版本校验
+12. Excel Loader
+13. 资料目录扫描 load_documents_from_dir()
+14. Document Processor 通用清洗
+15. Document Chunker 支持 policy_clause + paragraph_then_overlap
+16. PDF 专用切分前规整
+17. 通用“xxx制度条款A（xxx）”识别
+18. Excel 按 sheet / row 生成 Document
+19. metadata 贯穿建库、检索和 debug
+20. 目录 hash 判断资料目录变化
+21. document_pipeline_version / metadata_schema_version 索引版本校验
+22. Router 样本补充，支持表格型资料查询进入 RAG
 ```
 
 ---
 
-## 16. 当前限制
+## 17. 当前限制
 
 当前仍是求职展示型项目，不是生产级企业知识库系统。
 
@@ -697,49 +791,56 @@ page = 3
 2. 扫描型 PDF OCR 尚未实现
 3. 复杂 PDF 表格结构还原尚未实现
 4. 多栏 PDF 版面恢复尚未实现
-5. Excel Loader 尚未实现
-6. Word / docx Loader 尚未实现
-7. 权限过滤目前只保留 permission_level 字段，尚未真正按用户权限过滤
-8. 文档版本管理目前只保留 version 字段，尚未实现多版本过滤
-9. section_heading 小标题切分尚未实现
-10. 重复资料去重尚未实现
+5. Excel 当前只支持普通单行 header + 数据行
+6. Excel 合并单元格、多级表头、公式重新计算、透视表尚未支持
+7. Word / docx Loader 尚未实现
+8. 权限过滤目前只保留 permission_level 字段，尚未真正按用户权限过滤
+9. 文档版本管理目前只保留 version 字段，尚未实现多版本过滤
+10. section_heading 小标题切分尚未实现
+11. 重复资料去重尚未实现
 ```
 
 ---
 
-## 17. 项目亮点
+## 18. 项目亮点
 
 ```text
 1. 从单文件 knowledge.txt Demo 升级为资料目录入库
-2. 支持 txt + 文本型 PDF 混合入库
+2. 支持 txt + 文本型 PDF + Excel 混合入库
 3. PDF 按 page 生成 Document，保留 page metadata
-4. 使用统一 Document(text + metadata) 承接多类型资料
-5. chunk 不只返回字符串，而是保留 metadata
-6. 根据内容结构选择 chunk 策略，不是只按固定长度切
-7. 针对制度类文档实现通用 policy_clause 条款级切分
-8. PDF 专用行内断行处理只对 file_type=pdf 生效，避免影响 txt
-9. 检索结果返回 source_file / file_type / page / chunk_strategy，方便溯源和 debug
-10. 使用目录 hash 监控资料目录变化
+4. Excel 按 sheet / row 生成 Document，保留 sheet_name / row_number
+5. 使用统一 Document(text + metadata) 承接多类型资料
+6. chunk 不只返回字符串，而是保留 metadata
+7. 根据内容结构选择 chunk 策略，不是只按固定长度切
+8. 针对制度类文档实现通用 policy_clause 条款级切分
+9. PDF 专用行内断行处理只对 file_type=pdf 生效，避免影响 txt / Excel
+10. 检索结果返回 source_file / file_type / page / sheet_name / row_number / chunk_strategy，方便溯源和 debug
+11. 使用目录 hash 监控资料目录变化
+12. Router 样本会随着知识库业务范围扩展而维护
 ```
 
 ---
 
-## 18. 面试表达
+## 19. 面试表达
 
 ```text
-我把原来的单文件 RAG Demo 升级成了资料目录入库模式。系统会扫描 data/raw_docs 目录，对 txt 和文本型 PDF 分别调用对应 Loader。txt 通常生成一个 Document，PDF 会按 page 生成多个 Document，并在 metadata 中保留 source_file、file_type 和 page。
+我把原来的单文件 RAG Demo 升级成了资料目录入库模式。系统会扫描 data/raw_docs 目录，对 txt、文本型 PDF 和 Excel 分别调用对应 Loader。
+
+txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在 metadata 中保留 page；Excel 不会简单拼成长文本，而是按 sheet 和 row 读取，把每一行结合 header 转换成自然语言 Document，并在 metadata 中保留 sheet_name 和 row_number。
 
 后续所有 Document 会统一进入 Processor、Chunker、Index Builder 和检索链路。Processor 做通用清洗；Chunker 根据内容结构选择切分策略。如果识别到“xxx制度条款A/B/C”这种业务结构，就按条款切分；识别不到时退回 paragraph_then_overlap。
 
-接入 PDF 后我发现，文本型 PDF 抽取出来虽然也是文本，但可能出现行内断行、页码噪声和条款边界不稳定等问题。所以我只在 file_type=pdf 时，在条款切分前做轻量规整，比如合并单个换行、去掉页码，避免影响原来结构正常的 txt。
+接入 PDF 后我发现，文本型 PDF 抽取出来虽然也是文本，但可能出现行内断行、页码噪声和条款边界不稳定等问题。所以我只在 file_type=pdf 时，在条款切分前做轻量规整，避免影响原来结构正常的 txt 和 Excel。
 
-这样系统不仅能回答问题，还能通过 used_chunks_debug 解释命中的资料来自哪个文件、PDF 第几页、使用了哪种 chunk_strategy。
+接入 Excel 后我发现，Loader 和索引正常后，还需要让 Router 知道“培训报名、会议室预约、办公用品领用”这类表格型事实查询也属于 RAG 范围。因此我补充了 Excel 场景的 RAG 样本和领域关键词。
+
+这样系统不仅能回答问题，还能通过 used_chunks_debug 解释命中的资料来自哪个文件、PDF 第几页、Excel 哪个 sheet 和哪一行、使用了哪种 chunk_strategy。
 ```
 
 ---
 
-## 19. 一句话总结
+## 20. 一句话总结
 
 ```text
-这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践能力。
+这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践能力。
 ```

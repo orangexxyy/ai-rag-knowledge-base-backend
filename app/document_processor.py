@@ -63,6 +63,7 @@ def process_documents(documents: list[Document]) -> list[Document]:
 
         # 如果清洗后是空文本，直接跳过
         if not cleaned_text:
+            print("⚠️ 清洗后为空，跳过 Document：", doc.metadata)
             continue
 
         # 【重点理解】

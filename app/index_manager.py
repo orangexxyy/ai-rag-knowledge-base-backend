@@ -74,15 +74,9 @@ def calculate_dir_hash(dir_path: str) -> str:
     - 目录模式下，需要检查目录里所有支持文件是否变化
     - 文件内容变化、文件名变化、新增文件、删除文件，都应该让索引失效
 
-    当前只统计：
-    - .txt
-    - .pdf
-
-    后续支持 Excel 时，再加入 .xlsx
     """
 
-    supported_suffixes = {".txt", ".pdf"}
-
+    supported_suffixes = {".txt", ".pdf", ".xlsx"}
     dir_path_obj = os.path.abspath(dir_path)
 
     if not os.path.exists(dir_path_obj):
