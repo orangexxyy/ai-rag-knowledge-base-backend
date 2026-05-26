@@ -699,6 +699,47 @@ uvicorn app.main:app --reload
 http://127.0.0.1:8000/docs
 ```
 
+### 14.6 前端 Demo
+
+`frontend/` 是基于 React + Vite + TypeScript 的轻量展示页面，用于调用已有的：
+
+```text
+POST /ask_langchain
+```
+
+页面会展示 `answer`、`intent`、`retriever_status`、`retrieval_query` 和
+`used_chunks_debug`。其中调试面板重点用于呈现 RAG 的可解释性信息：
+
+```text
+source_file
+file_type
+page
+sheet_name
+row_number
+chunk_strategy
+FAISS / BM25 / RRF / rerank 分数
+```
+
+启动后端：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+启动前端：
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+访问页面：
+
+```text
+http://127.0.0.1:5173
+```
+
 ---
 
 ## 15. 推荐测试问题

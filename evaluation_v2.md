@@ -501,3 +501,17 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 
 在测试中，我验证了“事假怎么申请？”可以命中制度条款，“VPN 权限怎么申请？”可以命中 PDF 第 2 页，“产品入门训练营报名截止是什么时候？”可以命中 Excel 培训报名表第 2 行。最终 used_chunks_debug 可以展示 source_file、file_type、page、sheet_name、row_number 和 chunk_strategy，方便解释系统为什么这样回答。
 ```
+
+---
+
+## 11. 前端 Demo 测试结果
+
+本阶段补充了基于 React + Vite + TypeScript 的轻量前端 Demo，验证结果如下：
+
+```text
+1. 前端可以正常访问 http://127.0.0.1:5173。
+2. 页面可以调用后端 POST /ask_langchain 并展示回答及检索状态。
+3. Excel 问题“产品入门训练营报名截止是什么时候？”能够在页面展示 sheet_name / row_number。
+4. 未覆盖问题“公司年终奖发放规则是什么？”返回 low_confidence 时，页面能够展示 0 chunks。
+5. 该前端主要用于展示 RAG 可解释性字段与演示检索链路，不是生产级 UI。
+```

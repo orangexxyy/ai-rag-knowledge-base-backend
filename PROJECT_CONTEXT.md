@@ -552,3 +552,25 @@ GitHub 提交
 3. 准备简历项目亮点更新
 4. 后续再考虑 Word Loader / section_heading / 自动化评估
 ```
+
+---
+
+## 12. 轻量前端 Demo
+
+当前项目已新增 `frontend/` 轻量前端 Demo，技术栈为 React + Vite + TypeScript。
+
+前端不是核心 RAG 逻辑，而是现有接口能力的展示层。它直接调用
+`POST /ask_langchain`，将 JSON 响应中的回答、检索状态和调试数据以页面形式呈现。
+
+前端的主要价值是把 RAG 可解释性信息可视化，特别是：
+
+```text
+used_chunks_debug
+source_file / file_type / page
+sheet_name / row_number / chunk_strategy
+FAISS / BM25 / RRF / rerank 分数
+```
+
+为了让 Vite 开发页面能够从浏览器访问 FastAPI 接口，CORS 修改仅在
+`app/main.py` 中完成，允许 `http://127.0.0.1:5173` 和
+`http://localhost:5173` 调用后端。该调整不改变 RAG 检索、路由、切分或回答逻辑。

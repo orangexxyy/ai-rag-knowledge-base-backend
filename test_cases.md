@@ -225,7 +225,17 @@ data.answer_llm_is_local
 
 ---
 
-## 8. 当前测试结论
+## 8. 前端 Demo 测试（F001-F003）
+
+| case_id | 测试问题 | 预期页面结果 | 重点观察字段 | 是否通过 |
+|---|---|---|---|---|
+| F001 | 产品入门训练营报名截止是什么时候？ | 页面展示 `answer`，并展示 xlsx / 培训报名表 / `row_number` | `file_type=xlsx`、`sheet_name=培训报名表`、`row_number` | 是 |
+| F002 | 事假怎么申请？ | 页面展示 `retriever_status=matched`，并展示 `policy_clause` 或相关来源 metadata | `chunk_strategy`、`source_file`、`page` | 是 |
+| F003 | 公司年终奖发放规则是什么？ | 页面展示 `retriever_status=low_confidence`，`used_chunks_debug` 为 `0 chunks` | `retriever_status`、调试面板数量 | 是 |
+
+---
+
+## 9. 当前测试结论
 
 当前企业知识库 RAG 项目已经验证：
 
