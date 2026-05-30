@@ -71,6 +71,7 @@ Every feature should be:
 - testable
 - explainable
 - safe to discuss in interviews
+
 ## 2.1 Code Comment Rules
 
 For code generated or modified in this project:
@@ -717,9 +718,11 @@ If a feature is partially implemented, describe it as:
 - future extension
 
 Do not describe partial features as production-grade.
+
 ### 13.1 Documentation Consistency Rules
 
 When updating documentation after a feature is implemented, do not only append new content. Search existing documentation for outdated or conflicting statements and update the original paragraphs directly. Ensure README.md, PROJECT_CONTEXT.md, test_cases.md, evaluation_v2.md, and AGENTS.md use the same implemented / partial / not implemented status.
+
 ---
 
 ## 14. Output Format After Each Task

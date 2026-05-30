@@ -132,7 +132,7 @@ MAX_HISTORY_TURNS = 5
 # =========================
 
 # Minimal session summary memory switch.
-# This stage only defines storage/config; the main RAG chain is not connected yet.
+# 当前已接入 /ask_langchain 主链路；关闭后会跳过 summary 读取、Query Rewrite 注入和自动更新。
 ENABLE_MEMORY_SUMMARY = os.getenv("ENABLE_MEMORY_SUMMARY", "true").lower() == "true"
 
 # Start summary only after the session has enough history messages.

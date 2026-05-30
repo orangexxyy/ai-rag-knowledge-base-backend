@@ -19,6 +19,8 @@ from app.config import (
     MODEL_NAME,
     OLLAMA_MODEL,
     MEMORY_RECENT_MESSAGES_KEEP,
+    MEMORY_SUMMARY_MIN_CHARS,
+    MEMORY_SUMMARY_UPDATE_INTERVAL,
 )
 from app.chat_history_store import (
     get_memory_summary,
@@ -207,6 +209,30 @@ def update_session_memory_summary_after_turn(
                 {
                     "summary_updated": False,
                     "summary_update_reason": "no_valid_messages_for_summary",
+                    "summary_update_error": None,
+                }
+            )
+            return memory_debug
+        valid_summary_text = "\n".join(
+            f"{message.get('role')}: {message.get('content', '').strip()}"
+            for message in selected_messages
+            if message.get("content", "").strip()
+        )
+        # 过滤掉 low_confidence / fallback 回复后再次判断阈值，避免为很少的有效上下文调用 summary LLM。
+        if len(selected_messages) < MEMORY_SUMMARY_UPDATE_INTERVAL:
+            memory_debug.update(
+                {
+                    "summary_updated": False,
+                    "summary_update_reason": "not_enough_valid_messages_for_summary",
+                    "summary_update_error": None,
+                }
+            )
+            return memory_debug
+        if len(valid_summary_text) < MEMORY_SUMMARY_MIN_CHARS:
+            memory_debug.update(
+                {
+                    "summary_updated": False,
+                    "summary_update_reason": "not_enough_valid_chars_for_summary",
                     "summary_update_error": None,
                 }
             )

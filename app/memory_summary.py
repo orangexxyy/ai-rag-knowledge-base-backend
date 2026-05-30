@@ -47,7 +47,7 @@ def select_messages_for_summary(
     recent_messages_keep: int = MEMORY_RECENT_MESSAGES_KEEP,
 ) -> list[dict]:
     """
-    Select messages not yet covered by summary, excluding the newest exact messages.
+    选择尚未被 summary 覆盖的历史消息，并保留最近若干条原始消息不参与压缩。
     """
     if summarized_message_count < 0:
         summarized_message_count = 0
@@ -76,7 +76,7 @@ def should_update_memory_summary(
     recent_messages_keep: int = MEMORY_RECENT_MESSAGES_KEEP,
 ) -> dict:
     """
-    Decide whether the session summary should be updated.
+    根据总消息数、新增未摘要消息数和字符数判断是否需要更新 session summary。
     """
     total_count = len(history_messages)
     candidate_messages = select_messages_for_summary(
@@ -120,7 +120,7 @@ def build_memory_summary_prompt(
     max_chars: int = MEMORY_SUMMARY_MAX_CHARS,
 ) -> str:
     """
-    Build a constrained prompt for incremental session summary update.
+    构造增量 summary prompt：previous_summary + 新增对话 -> updated_summary。
     """
     previous_summary_text = (previous_summary or "").strip()
     new_messages_text = _format_messages(new_messages)
@@ -160,6 +160,11 @@ Updated summary:
 
 
 def _call_deepseek_for_summary(prompt: str) -> str:
+    """
+    调用 DeepSeek 生成 session summary。
+
+    注意：summary 生成默认使用 DeepSeek API，和最终 answer 的 LLM_PROVIDER 切换是两条独立路径。
+    """
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -199,7 +204,7 @@ def summarize_session_memory(
     llm_call=None,
 ) -> dict:
     """
-    Generate an updated session memory summary with failure fallback.
+    生成 updated session summary，并在 LLM 调用失败时返回 error 而不是抛出异常。
     """
     if not new_messages:
         return {
@@ -215,6 +220,7 @@ def summarize_session_memory(
     )
 
     try:
+        # 默认走 DeepSeek；测试时可以通过 llm_call 注入假模型，避免真实网络调用。
         call_model = llm_call or _call_deepseek_for_summary
         updated_summary = call_model(prompt).strip()
 

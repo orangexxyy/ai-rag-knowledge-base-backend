@@ -900,11 +900,12 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 - 新增 SQLite 表 `session_memory_summaries`，保存当前 session 的压缩摘要。
 - 按阈值触发 summary 更新，而不是每轮都更新。
 - 使用 LLM 对较早历史做增量压缩。
+- 摘要生成默认使用 DeepSeek API；这和最终回答的 `LLM_PROVIDER` 切换不是同一件事。
 - 保留 recent messages，避免最新几轮对话被过早压缩。
 - summary 仅用于 Query Rewrite 的上下文理解。
 - summary 不进入 `reference_text`，不作为最终回答的事实依据。
 - `/ask_langchain` 返回 `memory_debug`，用于说明 summary 是否存在、是否用于 Query Rewrite、是否更新成功。
-- summary 更新失败不会影响原 RAG / chat 回答。
+- 若 DeepSeek 不可用或 summary 更新失败，不会影响原 RAG / chat 回答。
 - 更新 summary 前会过滤 `low_confidence` / 资料不足兜底回答，避免把“资料中没有找到足够相关内容”等失败回复写入记忆。
 
 `memory_debug` 示例：
