@@ -2,7 +2,7 @@
 
 ## 1. 项目简介
 
-本项目是一个基于 **FastAPI + RAG + Document Ingestion Pipeline + FAISS / BM25 / RRF 混合检索 + DashScope Reranker + LangChain + SQLite 多轮会话 + LLM Provider 可切换** 的企业知识库问答后端项目。
+本项目是一个基于 **FastAPI + RAG + Document Ingestion Pipeline + FAISS / BM25 / RRF 混合检索 + DashScope Reranker + LangChain + SQLite 多轮会话 + 最小版 Session Summary Memory + LLM Provider 可切换** 的企业知识库问答后端项目。
 
 项目面向企业内部知识库场景，例如：
 
@@ -58,6 +58,7 @@ POST /ask_langchain
 7. metadata 如何贯穿建库、检索和 debug
 8. 如何避免资料不足时大模型硬答
 9. 如何通过 debug 字段解释检索、重排和回答来源
+10. 如何用最小版 session summary memory 辅助多轮 Query Rewrite
 ```
 
 ---
@@ -817,6 +818,7 @@ used_chunks_debug 可以解释命中来源
 20. 目录 hash 判断资料目录变化
 21. document_pipeline_version / metadata_schema_version 索引版本校验
 22. Router 样本补充，支持表格型资料查询进入 RAG
+23. 最小版 session summary memory，summary 只用于 Query Rewrite
 ```
 
 ---
@@ -883,5 +885,53 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 ## 20. 一句话总结
 
 ```text
-这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践能力。
+这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话、最小版 session summary memory 和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践能力。
+```
+
+---
+
+## 21. 最小版 session summary memory
+
+当前项目已在 `/ask_langchain` 主链路中集成一个**最小版 session summary memory**。它的定位是：在同一个 `session_id` 内，对较早的会话历史做压缩摘要，辅助后续 Query Rewrite 理解多轮追问上下文。
+
+已实现能力：
+
+- 基于 `session_id + SQLite` 的 session memory。
+- 新增 SQLite 表 `session_memory_summaries`，保存当前 session 的压缩摘要。
+- 按阈值触发 summary 更新，而不是每轮都更新。
+- 使用 LLM 对较早历史做增量压缩。
+- 保留 recent messages，避免最新几轮对话被过早压缩。
+- summary 仅用于 Query Rewrite 的上下文理解。
+- summary 不进入 `reference_text`，不作为最终回答的事实依据。
+- `/ask_langchain` 返回 `memory_debug`，用于说明 summary 是否存在、是否用于 Query Rewrite、是否更新成功。
+- summary 更新失败不会影响原 RAG / chat 回答。
+- 更新 summary 前会过滤 `low_confidence` / 资料不足兜底回答，避免把“资料中没有找到足够相关内容”等失败回复写入记忆。
+
+`memory_debug` 示例：
+
+```json
+{
+  "enabled": true,
+  "summary_exists": true,
+  "summary_used_for_query_rewrite": true,
+  "summarized_message_count": 12,
+  "summary_preview": "用户连续询问报销金额区间审批规则...",
+  "summary_updated": false,
+  "summary_update_reason": "not_enough_new_messages",
+  "summary_update_error": null
+}
+```
+
+当前未实现，也不应在简历或面试中夸大为：
+
+- 完整 long-term memory。
+- user profile memory。
+- vector memory。
+- 跨 session 长期记忆检索。
+- memory 与知识库统一向量检索系统。
+
+推荐表述：
+
+```text
+项目实现了一个最小版 session summary memory：在单个 session_id 内使用 SQLite 保存会话摘要，按阈值用 LLM 压缩较早历史，并仅把 summary 作为 Query Rewrite 的辅助上下文，不作为知识库证据。
 ```

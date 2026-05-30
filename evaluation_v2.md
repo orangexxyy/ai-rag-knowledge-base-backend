@@ -515,3 +515,57 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 4. 未覆盖问题“公司年终奖发放规则是什么？”返回 low_confidence 时，页面能够展示 0 chunks。
 5. 该前端主要用于展示 RAG 可解释性字段与演示检索链路，不是生产级 UI。
 ```
+---
+
+## 12. 最小版 session summary memory 测试记录
+
+> 测试状态：真实接口测试已通过。  
+> 能力边界：这是最小版 session summary memory，不是完整 long-term memory、user profile memory 或 vector memory。
+
+### 12.1 已验证能力
+
+本阶段通过 `POST /ask_langchain` 真实接口测试验证：
+
+1. 保留原有 `session_id + SQLite` 会话历史。
+2. 新增 `session_memory_summaries` 表保存 session 级 summary。
+3. 达到阈值后，系统会使用 LLM 压缩较早历史并写入 SQLite。
+4. recent messages 会继续保留为精确上下文。
+5. summary 只用于后续 Query Rewrite。
+6. summary 不进入 `reference_text`，不作为事实依据。
+7. `memory_debug` 可以返回 summary 状态、更新原因和错误信息。
+8. summary 更新失败不会影响原本 RAG / chat 回答。
+9. low_confidence / 资料不足 / 未找到资料等兜底回答会被过滤，避免污染 summary。
+
+### 12.2 回归测试结果
+
+| case_id | 测试目标 | 测试方式 | 结果 | 关键证据 |
+|---|---|---|---|---|
+| M001 | 普通 RAG 不坏 | `事假怎么申请？` | 通过 | `retriever_status=matched` |
+| M002 | low_confidence 不坏 | `公司年终奖发放规则是什么？` | 通过 | `retriever_status=low_confidence`，兜底回答不作为事实记忆 |
+| M003 | 多轮追问不坏 | `报销500到2000元怎么审批？` → `那再高一点呢？` | 通过 | Query Rewrite 仍能理解“更高金额区间” |
+| M004 | 强制触发 summary 更新 | 构造超过阈值的 session 历史 | 通过 | `memory_debug.summary_updated=true`，SQLite summary 写入成功 |
+| M005 | 禁用 memory 兼容 | `ENABLE_MEMORY_SUMMARY=False` | 通过 | 不读取、不更新 summary，旧行为保持 |
+| M006 | summary 失败降级 | 模拟 summary LLM 失败 | 通过 | 原回答返回，`memory_debug.summary_update_error` 有值 |
+
+### 12.3 当前未实现
+
+当前没有实现：
+
+- 完整 long-term memory。
+- user profile memory。
+- vector memory。
+- 跨 session 长期记忆检索。
+
+### 12.4 面试表达建议
+
+可以说：
+
+```text
+我在现有 /ask_langchain 主链路里加了一个最小版 session summary memory：系统按阈值压缩较早历史，保留 recent messages，并把 summary 只用于 Query Rewrite。summary 不进入 reference_text，也不作为事实依据。
+```
+
+不要说：
+
+```text
+这是完整长期记忆系统或跨 session 用户记忆系统。
+```

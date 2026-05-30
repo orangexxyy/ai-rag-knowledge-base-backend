@@ -25,6 +25,7 @@ Current implemented capabilities include:
 - FastAPI backend
 - Main demo API: `POST /ask_langchain`
 - SQLite multi-turn conversation history
+- minimal session summary memory based on `session_id + SQLite`
 - chat / rag routing
 - Query Rewrite
 - FAISS + BM25 + RRF hybrid retrieval
@@ -70,6 +71,17 @@ Every feature should be:
 - testable
 - explainable
 - safe to discuss in interviews
+## 2.1 Code Comment Rules
+
+For code generated or modified in this project:
+
+* Use Chinese comments for key business logic, important conditional branches, data flow, and integration points.
+* Keep function names, variable names, class names, type hints, filenames, API names, and technical terms in English.
+* Do not add comments to every line. Only comment on logic that helps the user understand why the code is written this way.
+* Function docstrings can use Chinese to explain purpose, inputs, outputs, and important side effects.
+* Do not change existing behavior only for the sake of adding comments.
+* When modifying existing code, preserve the original style as much as possible, but add Chinese comments around newly added key logic.
+* Comments should help the user understand and explain the code in interviews.
 
 ---
 
@@ -390,7 +402,7 @@ Recommended memory test cases:
 
 1. Normal RAG question
 2. Follow-up question
-3. Question that should use memory summary if implemented
+3. Question that should use minimal session summary memory when available
 4. Old `/ask_langchain` compatibility test
 5. low_confidence test
 
@@ -426,6 +438,41 @@ For git tasks:
 
 If any required check cannot be run, clearly say why and stop before commit unless the user explicitly approves continuing.
 
+### 7.7 Test Failure Handling Rules
+
+If a test or validation command fails:
+
+1. First analyze and explain the failure reason.
+2. Only fix small issues directly related to the current task.
+3. Do not expand the modification scope just to make tests pass.
+4. If the fix requires modifying unauthorized files, restructuring the main chain, changing retrieval behavior, changing router/reranker logic, changing document loading/chunking/indexing logic, or changing existing database schema, stop and explain the reason before making changes.
+5. Do not silently change test expectations to hide real problems.
+6. After fixing, rerun the relevant test or validation command.
+7. Output:
+
+   * failed command
+   * failure reason
+   * files changed for the fix
+   * retest command
+   * retest result
+   * remaining risk
+
+For the current RAG project, Codex may fix small issues related to the current stage, such as import errors, function parameter mismatch, syntax errors, or memory_debug field mismatch.
+
+Codex must not modify the following without explicit confirmation:
+
+* FAISS / BM25 / RRF retrieval behavior
+* reranker logic or thresholds
+* semantic router strategy or thresholds
+* document loader
+* document processor
+* document chunker
+* index builder
+* index manager
+* existing database schema destructive changes
+* API request body breaking changes
+
+
 ---
 
 ## 8. Memory Integration Rules
@@ -447,6 +494,18 @@ This project already has basic session memory.
 A compressed summary of previous conversation history.
 
 Useful when conversation history becomes long.
+
+This project already has a minimal session summary memory implementation:
+
+- stored in SQLite table `session_memory_summaries`
+- updated by thresholds
+- generated from older session history while keeping recent messages
+- used only for Query Rewrite context
+- not added to `reference_text`
+- not used as factual evidence for final answers
+- visible through `memory_debug`
+- failure to update the summary must not break the original RAG / chat answer
+- low_confidence or insufficient-reference fallback answers should be filtered before summarization
 
 ### 8.3 User Profile Memory
 
@@ -480,7 +539,7 @@ For the current project, prefer incremental memory integration:
 - Keep memory optional and controllable.
 - Do not claim full long-term memory unless implemented.
 
-If implementing a minimal `memory_summary` feature:
+For the implemented minimal `memory_summary` feature:
 
 1. Explain where the summary is stored.
 2. Explain when it is updated.
@@ -635,6 +694,7 @@ Allowed implemented claims:
 - SQLite session history
 - React frontend demo
 - basic session memory based on `session_id` and SQLite conversation history
+- minimal session summary memory based on `session_id + SQLite`
 
 Do not claim unless actually implemented:
 
@@ -642,6 +702,9 @@ Do not claim unless actually implemented:
 - Word / docx Loader
 - production-grade permission system
 - full long-term memory system
+- user profile memory
+- vector memory
+- cross-session long-term memory retrieval
 - full multi-agent system
 - LoRA / QLoRA fine-tuning implementation
 - production-grade frontend management platform
@@ -654,7 +717,9 @@ If a feature is partially implemented, describe it as:
 - future extension
 
 Do not describe partial features as production-grade.
+### 13.1 Documentation Consistency Rules
 
+When updating documentation after a feature is implemented, do not only append new content. Search existing documentation for outdated or conflicting statements and update the original paragraphs directly. Ensure README.md, PROJECT_CONTEXT.md, test_cases.md, evaluation_v2.md, and AGENTS.md use the same implemented / partial / not implemented status.
 ---
 
 ## 14. Output Format After Each Task
@@ -720,21 +785,21 @@ Show git status
 Commit only after confirmation
 ```
 
-Example for memory integration:
+Example for memory extension:
 
 ```text
 Please read AGENTS.md and enter Feature Integration Mode.
 
 Goal:
-Integrate a minimal memory_summary mechanism into the existing /ask_langchain flow.
-This should not be an isolated demo.
+Extend the existing minimal memory_summary mechanism in /ask_langchain safely.
+This should not be an isolated demo or a rewrite.
 
 Requirements:
 1. Keep existing session_id + SQLite history behavior.
-2. Add summary memory only if it can be integrated safely.
+2. Keep the current minimal session summary memory backward compatible.
 3. Make memory usage visible in debug output if practical.
 4. Preserve existing RAG, PDF metadata, Excel metadata, and low_confidence behavior.
-5. Create .ai_plans/memory_summary_plan.md before coding.
+5. Update .ai_plans/memory_summary_plan.md before coding if the change is multi-step.
 6. Provide design first and wait for confirmation.
 ```
 
@@ -755,3 +820,5 @@ Requirements:
 4. Create .ai_plans/agent_demo_plan.md before coding.
 5. Provide design first and wait for confirmation.
 ```
+
+For code generated for this project, use Chinese comments for key business logic and data flow explanations. Keep function names, variable names, type hints, and technical terms in English.

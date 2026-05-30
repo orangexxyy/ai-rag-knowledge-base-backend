@@ -256,3 +256,29 @@ data.answer_llm_is_local
 14. DeepSeek / Ollama 最终回答模型切换正常
 15. Router 样本需要随着知识库业务范围同步维护
 ```
+---
+
+## 10. Memory Summary 专项测试（M001-M008）
+
+> 当前 memory 能力定位：最小版 session summary memory。它只在单个 `session_id` 内压缩较早历史，并作为 Query Rewrite 辅助上下文；不属于完整 long-term memory、user profile memory 或 vector memory。
+
+| case_id | 模块 | session_id | 测试步骤 / 当前问题 | 预期结果 | 重点观察 | 是否通过 | 备注 |
+|---|---|---|---|---|---|---|---|
+| M001 | 普通 RAG 兼容 | `memory_m001` | `事假怎么申请？` | rag / matched | `retriever_status=matched`，`reference_text` 来自知识库 | 是 | 验证 memory 接入后普通 RAG 不坏 |
+| M002 | low_confidence 兼容 | `memory_m002` | `公司年终奖发放规则是什么？` | rag / low_confidence | `answer_source=system_fallback`，不硬答 | 是 | 兜底回答不应被当成事实记忆 |
+| M003 | 多轮追问兼容 | `memory_m003` | 第一轮：`报销500到2000元怎么审批？`；第二轮：`那再高一点呢？` | rag / matched | `retrieval_query` 能指向更高金额审批 | 是 | 验证 Query Rewrite 仍可处理短追问 |
+| M004 | 强制触发 summary 更新 | `memory_m004` | 构造超过阈值的多轮对话后继续提问 | summary 自动更新 | `memory_debug.summary_updated=true`，`summarized_message_count` 增加 | 是 | 真实接口测试已通过 |
+| M005 | summary 仅用于 Query Rewrite | `memory_m005` | 有已有 summary 后继续短追问 | summary 可辅助 rewrite | `summary_used_for_query_rewrite=true`，但 `reference_text` 仍来自检索 chunk | 是 | summary 不进入 `reference_text` |
+| M006 | summary 更新失败降级 | `memory_m006` | 模拟或触发 summary LLM 失败 | 原回答仍返回 | `summary_updated=false`，`summary_update_error` 有值 | 是 | summary 失败不影响 RAG / chat |
+| M007 | 禁用 memory | `memory_m007` | 设置 `ENABLE_MEMORY_SUMMARY=False` 后重复普通 RAG / 多轮问题 | 旧行为保持不变 | 不读取 / 不更新 summary，`summary_update_reason=disabled` | 是 | 验证开关兼容 |
+| M008 | 过滤失败回答 | `memory_m008` | 历史中包含 low_confidence / “资料中没有明确提到” / “未找到相关资料”等旧回答 | 不污染 summary | summary 保留用户关注主题，不保留“助手回答资料不足”为事实 | 是 | 防止旧测试失败回答污染记忆 |
+
+### Memory Summary 验收要点
+
+1. `session_memory_summaries` 只保存 session 级 summary。
+2. summary 按阈值更新，不是每轮请求都调用 LLM。
+3. recent messages 保留为精确上下文。
+4. summary 只辅助 Query Rewrite。
+5. summary 不进入 `reference_text`，不作为事实依据。
+6. summary 更新失败时，原 `/ask_langchain` 回答不失败。
+7. low_confidence / 资料不足兜底回答会被过滤，避免污染 summary。

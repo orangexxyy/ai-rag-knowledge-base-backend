@@ -6,30 +6,22 @@ def build_route_context(
     history_messages: list[dict], question: str, max_history_turns: int
 ) -> str:
     """
-    构造给 intent 路由使用的上下文文本
+    构造给 intent router 使用的上下文文本。
 
     注意：
-    - 这里只做历史拼接
-    - 不做 LLM 改写
-    - 目的是避免在路由阶段就把问题提前“rag 化”
+    - 这里只拼接历史，不做 LLM 改写。
+    - 目前只使用 user 历史，避免 assistant 回答噪声影响路由判断。
     """
-
-    # 1. 只取最近几条历史，避免历史太长导致路由被噪声影响
     recent_messages = history_messages[-max_history_turns:] if history_messages else []
 
     history_parts = []
 
     for message in recent_messages:
-        # 【修复点 1】用 get 更安全，避免脏数据缺字段时报错
         role = message.get("role", "")
         content = message.get("content", "").strip()
 
-        # 【修复点 2】这里应该是 assistant，不是 asssitant
-        # if role not in ["user", "assistant"]:
         if role not in ["user"]:
             continue
-
-        # 【修复点 3】空内容应该跳过，而不是写一个无效的 content
         if not content:
             continue
 
@@ -37,11 +29,9 @@ def build_route_context(
 
     history_text = "\n".join(history_parts)
 
-    # 2. 如果没有历史，直接用当前问题做路由
     if not history_text:
         return question.strip()
 
-    # 3. 有历史时，把历史和当前问题都交给 router
     return f"""
 历史对话：
 {history_text}
@@ -50,28 +40,23 @@ def build_route_context(
 {question.strip()}
 """.strip()
 
+
 def rebuild_retrieval_query_with_llm(
-    history_messages: list[dict], question: str, max_history_turns
+    history_messages: list[dict],
+    question: str,
+    max_history_turns,
+    memory_summary: str | None = None,
 ) -> str:
     """
-    构造用于 RAG 检索的问题字符串
+    构造用于 RAG 检索的 retrieval_query。
 
-    参数说明：
-    - history_messages: 最近的历史消息列表，格式例如：
-      [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-    - question: 用户当前问题
-    - max_history_turns: 最多参考最近几条历史消息（这里先按消息条数处理）
-
-    返回：
-    - 一个更适合做 embedding 检索的字符串
+    memory_summary 是可选的会话摘要上下文，只用于帮助 Query Rewrite
+    理解多轮追问，不是知识库资料，也不是最终回答的事实依据。
     """
-    # 1. 只取最近几条历史，避免一下子拼太多噪声
     recent_messages = history_messages[-max_history_turns:] if history_messages else []
 
-    # 2. 把历史消息拼成文本
     history_parts = []
     for msg in recent_messages:
-
         if USE_ASSISTANT_HISTORY:
             role = msg.get("role", "")
             content = msg.get("content", "").strip()
@@ -79,7 +64,7 @@ def rebuild_retrieval_query_with_llm(
             if not content:
                 continue
 
-            # 这里保留 role，方便让检索问题里还有“谁说的”这个上下文
+            # 保留 role，方便改写模型理解“谁说的”。
             history_parts.append(f"{role}: {content}")
         else:
             if msg.get("role") != "user":
@@ -90,23 +75,58 @@ def rebuild_retrieval_query_with_llm(
             if not content:
                 continue
 
-            # 这里只保留 user 历史，并显式标注为 user，方便保留“谁说的”这个上下文
+            # 默认只保留 user 历史，减少 assistant 回答对检索问题的干扰。
             history_parts.append(f"user: {content}")
 
     history_text = "\n".join(history_parts)
+    memory_summary_text = (memory_summary or "").strip()
 
-    # 3. 如果没有历史，就直接返回当前问题
-    if not history_text:
+    # memory_summary 为空时保持旧行为：没有历史就直接返回原问题，不触发 LLM rewrite。
+    if not history_text and not memory_summary_text:
         return question.strip()
 
-    # 4. 如果有历史，就拼成一个更完整的检索问题
-    retrieval_query = f"""
+    # 没有 memory_summary 时使用原来的 prompt 结构，确保旧调用路径不变。
+    if not memory_summary_text:
+        retrieval_query = f"""
 历史对话：
 {history_text}
 
 当前问题：
 {question.strip()}
 """
+        query = rewrite_query_with_content(content=retrieval_query)
+
+        return query
+
+    # memory_summary 只帮助 Query Rewrite 理解更早的会话上下文，
+    # 不能作为知识库资料、reference_text 或事实依据。
+    memory_summary_section = ""
+    if memory_summary_text:
+        memory_summary_section = f"""
+会话摘要上下文：
+{memory_summary_text}
+
+注意：
+上述会话摘要只用于理解用户追问的上下文，不是知识库资料，不是事实依据。
+最终回答仍必须依赖后续检索得到的 reference_text。
+""".strip()
+
+    history_section = ""
+    if history_text:
+        history_section = f"""
+历史对话：
+{history_text}
+""".strip()
+
+    retrieval_query = f"""
+{memory_summary_section}
+
+{history_section}
+
+当前问题：
+{question.strip()}
+""".strip()
+
     query = rewrite_query_with_content(content=retrieval_query)
 
     return query

@@ -127,6 +127,32 @@ USE_ASSISTANT_HISTORY = False
 #用户历史记录参考条数
 MAX_HISTORY_TURNS = 5
 
+# =========================
+# Memory Summary Config
+# =========================
+
+# Minimal session summary memory switch.
+# This stage only defines storage/config; the main RAG chain is not connected yet.
+ENABLE_MEMORY_SUMMARY = os.getenv("ENABLE_MEMORY_SUMMARY", "true").lower() == "true"
+
+# Start summary only after the session has enough history messages.
+MEMORY_SUMMARY_MIN_MESSAGES = int(os.getenv("MEMORY_SUMMARY_MIN_MESSAGES", "10"))
+
+# Update summary only after enough new messages are not yet summarized.
+MEMORY_SUMMARY_UPDATE_INTERVAL = int(os.getenv("MEMORY_SUMMARY_UPDATE_INTERVAL", "6"))
+
+# Avoid summarizing very short accumulated context.
+MEMORY_SUMMARY_MIN_CHARS = int(os.getenv("MEMORY_SUMMARY_MIN_CHARS", "3000"))
+
+# Keep the newest exact messages outside compressed summary for Query Rewrite.
+MEMORY_RECENT_MESSAGES_KEEP = int(os.getenv("MEMORY_RECENT_MESSAGES_KEEP", "4"))
+
+# Target max summary length in characters.
+MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("MEMORY_SUMMARY_MAX_CHARS", "800"))
+
+
+
+
 # config.py
 # FAISS 向量索引文件路径 (根据你的目录结构，放在 data 目录下)
 FAISS_INDEX_FILE = "data/chunk_index.faiss"

@@ -28,6 +28,15 @@ def init_chat_db() -> None:
         )
         """)
 
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_memory_summaries (
+            session_id TEXT PRIMARY KEY,
+            summary TEXT NOT NULL,
+            summarized_message_count INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """)
+
         conn.commit()
 
 
@@ -60,6 +69,73 @@ def get_session_history(session_id: str) -> list[dict]:
         })
 
     return history_messages
+
+
+def get_memory_summary(session_id: str) -> dict | None:
+    """
+    Read the session-level memory summary for a session_id.
+    Returns None when the session has no summary yet.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT summary, summarized_message_count, updated_at
+            FROM session_memory_summaries
+            WHERE session_id = ?
+            """,
+            (session_id,)
+        )
+
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    summary, summarized_message_count, updated_at = row
+    return {
+        "session_id": session_id,
+        "summary": summary,
+        "summarized_message_count": summarized_message_count,
+        "updated_at": updated_at,
+    }
+
+
+def upsert_memory_summary(
+    session_id: str,
+    summary: str,
+    summarized_message_count: int
+) -> None:
+    """
+    Insert or update the session-level memory summary.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO session_memory_summaries (
+                session_id,
+                summary,
+                summarized_message_count,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                summary = excluded.summary,
+                summarized_message_count = excluded.summarized_message_count,
+                updated_at = excluded.updated_at
+            """,
+            (
+                session_id,
+                summary,
+                summarized_message_count,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+        )
+
+        conn.commit()
 
 
 def append_message(session_id: str, role: str, content: str) -> None:

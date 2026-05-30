@@ -120,7 +120,7 @@ knowledge.txt 单文件 RAG Demo
 2. 根据岗位 JD 微调简历
 3. 准备项目介绍和面试追问回答
 4. 补齐 Memory / Agent / Transformer / PyTorch / LoRA 等岗位关键词的面试级理解
-5. 通过 Codex 小步集成能明显增强面试表达的功能，例如 memory_summary 或 agent_demo
+5. 通过 Codex 小步集成能明显增强面试表达的功能，例如继续完善已集成的 memory_summary，或后续增加 agent_demo
 6. 不再为了“把所有技术都学完”而推迟投递
 
 当前不建议优先做：
@@ -149,6 +149,7 @@ knowledge.txt 单文件 RAG Demo
 * 已实现 FastAPI + RAG 企业知识库问答后端
 * 已实现 chat / rag 分流
 * 已实现 SQLite 多轮会话历史
+* 已实现最小版 session summary memory
 * 已实现 Query Rewrite
 * 已实现 FAISS + BM25 + RRF 混合检索
 * 已接入 DashScope qwen3-rerank
@@ -164,14 +165,17 @@ knowledge.txt 单文件 RAG Demo
 
 不能夸大说：
 
-* 已实现生产级权限系统
-* 已实现完整长期 Memory
-* 已实现复杂 Multi-Agent
-* 已实现 LoRA / QLoRA 微调
-* 已实现 OCR 扫描型 PDF
-* 已实现 Word Loader
-* 已实现生产级企业知识库平台
-* 已实现生产级前端管理后台
+* 生产级权限系统已经完成
+* 完整长期 Memory 系统已经完成
+* user profile memory 已经完成
+* vector memory 已经完成
+* 跨 session 长期记忆检索已经完成
+* 复杂 Multi-Agent 已经完成
+* LoRA / QLoRA 微调已经完成
+* OCR 扫描型 PDF 已经完成
+* Word Loader 已经完成
+* 生产级企业知识库平台已经完成
+* 生产级前端管理后台已经完成
 
 如果是部分能力，要明确说：
 
@@ -278,28 +282,35 @@ knowledge.txt 单文件 RAG Demo
 * SQLite 多轮会话历史
 * history_messages
 * Query Rewrite 结合历史上下文
+* 最小版 session summary memory
+* `session_memory_summaries` SQLite 表
+* summary 按阈值触发更新
+* summary 使用 LLM 压缩较早历史
+* summary 仅用于 Query Rewrite
+* `memory_debug` 展示 summary 状态
+* summary 更新失败不影响原回答
+* 过滤 low_confidence / 资料不足兜底回答，避免污染 summary
 
 这可以称为：
 
 ```text
-基础 session memory / 短期会话记忆
+基础 session memory / 短期会话记忆 + 最小版 session summary memory
 ```
 
 还未完整实现：
 
 * 长期用户画像 memory
-* summary memory
 * vector memory
 * 跨 session 长期记忆检索
 * memory 与 RAG 的统一检索系统
 
-后续如果增强，优先考虑：
+当前已经完成：
 
 ```text
 memory_summary 融入 /ask_langchain 主链路
 ```
 
-但要明确是最小可用版本，不要夸大为完整长期 Memory 系统。
+但要明确它是最小可用版本：summary 只辅助 Query Rewrite，不进入 `reference_text`，也不作为事实依据，不要夸大为完整长期 Memory 系统。
 
 ### Agent
 
@@ -720,6 +731,59 @@ Demo 版
 * 是否存在夸大风险
 
 能力建设可以向中级 AI 应用开发靠近，但表达必须真实，不夸大尚未实现的能力，例如完整长期 memory、复杂 multi-agent、LoRA / QLoRA 微调、生产级权限系统等。
+
+---
+
+## 十六、当前已实现的最小版 session summary memory
+
+当前项目已经完成一个**最小版 session summary memory**，用于增强 `/ask_langchain` 主链路中的多轮 Query Rewrite。它不是完整长期记忆系统，也不是跨用户、跨 session 的记忆检索系统。
+
+### 已实现
+
+* 基于 `session_id + SQLite` 的 session memory。
+* 新增 `session_memory_summaries` 表，用于保存单个 session 的压缩摘要。
+* 按阈值触发 summary 更新：
+  * 最小历史消息数；
+  * 新增消息间隔；
+  * 最小字符数；
+  * 保留 recent messages。
+* 使用 LLM 压缩较早历史，保留最近消息作为精确上下文。
+* summary 仅注入 Query Rewrite，用于帮助理解“那再高一点呢？”这类追问。
+* summary 不进入 `reference_text`。
+* summary 不作为最终回答的事实依据。
+* `/ask_langchain` 返回 `memory_debug`，展示：
+  * `enabled`
+  * `summary_exists`
+  * `summary_used_for_query_rewrite`
+  * `summarized_message_count`
+  * `summary_preview`
+  * `summary_updated`
+  * `summary_update_reason`
+  * `summary_update_error`
+* summary 更新失败不会影响原本 RAG / chat 回答。
+* 更新前过滤 `low_confidence`、资料不足、未找到资料等兜底回答，避免把失败回答污染为记忆事实。
+
+### 未实现
+
+* 完整 long-term memory。
+* user profile memory。
+* vector memory。
+* 跨 session 长期记忆检索。
+* 把 memory 与知识库统一做向量检索。
+
+### 面试表达边界
+
+推荐表述：
+
+```text
+我实现的是最小版 session summary memory：同一个 session_id 内，系统会把较早会话压缩成 SQLite summary，并在后续 Query Rewrite 中作为上下文辅助。它不会进入 reference_text，也不会作为事实依据，因此不会替代 RAG 检索证据。
+```
+
+不要表述为：
+
+```text
+这是完整长期记忆 / 用户画像记忆 / 向量记忆 / 跨 session 记忆检索系统。
+```
 
 # RAG 项目当前阶段总结 - 2026-05-26
 
@@ -1233,6 +1297,11 @@ section_heading 小标题切分
 文档版本管理
 重复资料去重
 自动化评估集
+完整 long-term memory
+user profile memory
+vector memory
+跨 session 长期记忆检索
+memory 与 RAG 的统一向量检索系统
 ```
 
 ---
