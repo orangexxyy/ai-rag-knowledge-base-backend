@@ -8,8 +8,15 @@ from app.config import (
     MEMORY_SUMMARY_MAX_CHARS,
     MEMORY_SUMMARY_MIN_CHARS,
     MEMORY_SUMMARY_MIN_MESSAGES,
+    MEMORY_SUMMARY_PROVIDER,
     MEMORY_SUMMARY_UPDATE_INTERVAL,
     MODEL_NAME,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_PREDICT,
+    OLLAMA_REPEAT_PENALTY,
+    OLLAMA_TEMPERATURE,
+    OLLAMA_TOP_P,
 )
 
 
@@ -163,7 +170,7 @@ def _call_deepseek_for_summary(prompt: str) -> str:
     """
     调用 DeepSeek 生成 session summary。
 
-    注意：summary 生成默认使用 DeepSeek API，和最终 answer 的 LLM_PROVIDER 切换是两条独立路径。
+    注意：summary provider 和最终 answer 的 LLM_PROVIDER 是两条独立配置路径。
     """
     headers = {
         "Content-Type": "application/json",
@@ -197,6 +204,59 @@ def _call_deepseek_for_summary(prompt: str) -> str:
     return result["choices"][0]["message"]["content"].strip()
 
 
+def _call_ollama_for_summary(prompt: str) -> str:
+    """
+    调用本地 Ollama 生成 session summary。
+    """
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a careful conversation summarization assistant.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "stream": False,
+        "options": {
+            "temperature": OLLAMA_TEMPERATURE,
+            "top_p": OLLAMA_TOP_P,
+            "num_predict": OLLAMA_NUM_PREDICT,
+            "repeat_penalty": OLLAMA_REPEAT_PENALTY,
+        },
+    }
+
+    response = requests.post(
+        f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+        json=payload,
+        timeout=60,
+    )
+    response.raise_for_status()
+
+    result = response.json()
+    return result["message"]["content"].strip()
+
+
+def _call_configured_provider_for_summary(prompt: str) -> str:
+    """
+    根据 MEMORY_SUMMARY_PROVIDER 选择摘要模型。
+
+    不支持的 provider 会抛出清晰错误，并由 summarize_session_memory 捕获为降级结果。
+    """
+    if MEMORY_SUMMARY_PROVIDER == "deepseek":
+        return _call_deepseek_for_summary(prompt)
+    if MEMORY_SUMMARY_PROVIDER == "ollama":
+        return _call_ollama_for_summary(prompt)
+
+    raise ValueError(
+        "unsupported_memory_summary_provider: "
+        f"{MEMORY_SUMMARY_PROVIDER}. Supported values: deepseek, ollama"
+    )
+
+
 def summarize_session_memory(
     previous_summary: str | None,
     new_messages: list[dict],
@@ -220,8 +280,8 @@ def summarize_session_memory(
     )
 
     try:
-        # 默认走 DeepSeek；测试时可以通过 llm_call 注入假模型，避免真实网络调用。
-        call_model = llm_call or _call_deepseek_for_summary
+        # 默认按 MEMORY_SUMMARY_PROVIDER 选择摘要模型；测试时可通过 llm_call 注入假模型。
+        call_model = llm_call or _call_configured_provider_for_summary
         updated_summary = call_model(prompt).strip()
 
         if len(updated_summary) > max_chars:

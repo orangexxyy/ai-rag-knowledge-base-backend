@@ -258,7 +258,7 @@ data.answer_llm_is_local
 ```
 ---
 
-## 10. Memory Summary 专项测试（M001-M008）
+## 10. Memory Summary 专项测试（M001-M011）
 
 > 当前 memory 能力定位：最小版 session summary memory。它只在单个 `session_id` 内压缩较早历史，并作为 Query Rewrite 辅助上下文；不属于完整 long-term memory、user profile memory 或 vector memory。
 
@@ -272,6 +272,9 @@ data.answer_llm_is_local
 | M006 | summary 更新失败降级 | `memory_m006` | 模拟或触发 summary LLM 失败 | 原回答仍返回 | `summary_updated=false`，`summary_update_error` 有值 | 是 | summary 失败不影响 RAG / chat |
 | M007 | 禁用 memory | `memory_m007` | 设置 `ENABLE_MEMORY_SUMMARY=False` 后重复普通 RAG / 多轮问题 | 旧行为保持不变 | 不读取 / 不更新 summary，`summary_update_reason=disabled` | 是 | 验证开关兼容 |
 | M008 | 过滤失败回答 | `memory_m008` | 历史中包含 low_confidence / “资料中没有明确提到” / “未找到相关资料”等旧回答 | 不污染 summary | summary 保留用户关注主题，不保留“助手回答资料不足”为事实 | 是 | 防止旧测试失败回答污染记忆 |
+| M009 | DeepSeek summary provider | `memory_m009` | 设置 `MEMORY_SUMMARY_PROVIDER=deepseek` 后强制触发 summary 更新 | summary 尝试由 DeepSeek 生成 | 成功时写入 SQLite；失败时 `summary_update_error` 有值且原回答不失败 | 待测 | 与 `LLM_PROVIDER` 独立 |
+| M010 | Ollama summary provider | `memory_m010` | 设置 `MEMORY_SUMMARY_PROVIDER=ollama` 且本地 Ollama 可用后强制触发 summary 更新 | summary 尝试由 Ollama 生成 | 成功时写入 SQLite；`reference_text` 仍只来自检索 chunk | 待测 | 不代表全链路本地化 |
+| M011 | 不支持的 summary provider | `memory_m011` | 设置 `MEMORY_SUMMARY_PROVIDER=wrong-provider` 后强制触发 summary 更新 | 原回答仍返回 | `summary_updated=false`，`summary_update_error` 包含 unsupported provider 信息 | 待测 | 配置错误不应导致 `/ask_langchain` 崩溃 |
 
 ### Memory Summary 验收要点
 
@@ -282,3 +285,5 @@ data.answer_llm_is_local
 5. summary 不进入 `reference_text`，不作为事实依据。
 6. summary 更新失败时，原 `/ask_langchain` 回答不失败。
 7. low_confidence / 资料不足兜底回答会被过滤，避免污染 summary。
+8. `MEMORY_SUMMARY_PROVIDER` 只控制 summary 摘要生成，和最终回答的 `LLM_PROVIDER` 独立。
+9. `MEMORY_SUMMARY_PROVIDER=ollama` 只表示 summary 可走本地 Ollama，不代表 embedding / reranker / Query Rewrite 等全链路本地化。

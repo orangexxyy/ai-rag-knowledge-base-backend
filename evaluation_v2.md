@@ -535,6 +535,8 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 7. `memory_debug` 可以返回 summary 状态、更新原因和错误信息。
 8. summary 更新失败不会影响原本 RAG / chat 回答。
 9. low_confidence / 资料不足 / 未找到资料等兜底回答会被过滤，避免污染 summary。
+10. `MEMORY_SUMMARY_PROVIDER` 可独立控制 summary 摘要生成模型，支持 `deepseek` / `ollama`。
+11. `LLM_PROVIDER` 仍只控制最终 answer 生成模型，两者互不覆盖。
 
 ### 12.2 回归测试结果
 
@@ -546,6 +548,9 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 | M004 | 强制触发 summary 更新 | 构造超过阈值的 session 历史 | 通过 | `memory_debug.summary_updated=true`，SQLite summary 写入成功 |
 | M005 | 禁用 memory 兼容 | `ENABLE_MEMORY_SUMMARY=False` | 通过 | 不读取、不更新 summary，旧行为保持 |
 | M006 | summary 失败降级 | 模拟 summary LLM 失败 | 通过 | 原回答返回，`memory_debug.summary_update_error` 有值 |
+| M009 | DeepSeek summary provider | `MEMORY_SUMMARY_PROVIDER=deepseek` | 待测 | 预期 summary 使用 DeepSeek，失败时只写入 `summary_update_error` |
+| M010 | Ollama summary provider | `MEMORY_SUMMARY_PROVIDER=ollama` | 待测 | 预期 summary 使用本地 Ollama；不代表全链路本地化 |
+| M011 | 不支持的 summary provider | `MEMORY_SUMMARY_PROVIDER=wrong-provider` | 待测 | 预期原回答不失败，`summary_update_error` 有清晰 provider 错误 |
 
 ### 12.3 当前未实现
 
@@ -562,6 +567,8 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 
 ```text
 我在现有 /ask_langchain 主链路里加了一个最小版 session summary memory：系统按阈值压缩较早历史，保留 recent messages，并把 summary 只用于 Query Rewrite。summary 不进入 reference_text，也不作为事实依据。
+
+最终回答模型由 LLM_PROVIDER 控制；summary 摘要生成模型由 MEMORY_SUMMARY_PROVIDER 控制。两者可以独立配置，但当前 embedding / reranker / Query Rewrite 等环节仍可能使用云端 API，所以不能说成全链路本地化。
 ```
 
 不要说：

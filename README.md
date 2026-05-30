@@ -620,10 +620,22 @@ LLM_PROVIDER=ollama
 → Ollama 本地模型
 ```
 
+Session summary 摘要生成模型独立配置：
+
+```text
+MEMORY_SUMMARY_PROVIDER=deepseek
+→ DeepSeek 云端模型生成 memory_summary
+
+MEMORY_SUMMARY_PROVIDER=ollama
+→ Ollama 本地模型生成 memory_summary
+```
+
 注意：
 
 ```text
-当前只表示最终 answer 生成模型可切换。
+LLM_PROVIDER 只控制最终 answer 生成模型。
+MEMORY_SUMMARY_PROVIDER 只控制 session summary 摘要生成模型。
+两者可以独立配置，互不覆盖。
 Embedding、Query Rewrite、Semantic Router、DashScope Reranker 等环节仍可能依赖云端 API。
 因此当前不是全链路本地化。
 ```
@@ -661,6 +673,7 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 DASHSCOPE_API_KEY=your_dashscope_api_key
 
 LLM_PROVIDER=ollama
+MEMORY_SUMMARY_PROVIDER=ollama
 
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3-4b-instruct-local
@@ -900,7 +913,7 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 - 新增 SQLite 表 `session_memory_summaries`，保存当前 session 的压缩摘要。
 - 按阈值触发 summary 更新，而不是每轮都更新。
 - 使用 LLM 对较早历史做增量压缩。
-- 摘要生成默认使用 DeepSeek API；这和最终回答的 `LLM_PROVIDER` 切换不是同一件事。
+- 摘要生成由 `MEMORY_SUMMARY_PROVIDER` 独立控制，支持 `deepseek` / `ollama`；这和最终回答的 `LLM_PROVIDER` 切换不是同一件事。
 - 保留 recent messages，避免最新几轮对话被过早压缩。
 - summary 仅用于 Query Rewrite 的上下文理解。
 - summary 不进入 `reference_text`，不作为最终回答的事实依据。

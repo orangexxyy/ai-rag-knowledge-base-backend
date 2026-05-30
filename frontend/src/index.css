@@ -172,7 +172,8 @@ h2 {
 }
 
 .status-grid,
-.detail-grid {
+.detail-grid,
+.memory-grid {
   display: grid;
   gap: 12px;
   margin: 0;
@@ -186,16 +187,26 @@ h2 {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.memory-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .status-grid div,
-.detail-grid div {
+.detail-grid div,
+.memory-grid div {
   min-width: 0;
   padding: 10px 12px;
   border-radius: 8px;
   background: #f5f7fb;
 }
 
-.status-grid .wide {
+.status-grid .wide,
+.memory-grid .wide {
   grid-column: 1 / -1;
+}
+
+.memory-panel {
+  border-color: #d9e4f5;
 }
 
 dt {
@@ -269,14 +280,16 @@ dd {
   }
 
   .status-grid,
-  .detail-grid {
+  .detail-grid,
+  .memory-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 480px) {
   .status-grid,
-  .detail-grid {
+  .detail-grid,
+  .memory-grid {
     grid-template-columns: 1fr;
   }
 }

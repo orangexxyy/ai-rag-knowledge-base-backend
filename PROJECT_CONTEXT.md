@@ -748,6 +748,8 @@ Demo 版
   * 最小字符数；
   * 保留 recent messages。
 * 使用 LLM 压缩较早历史，保留最近消息作为精确上下文。
+* `MEMORY_SUMMARY_PROVIDER` 独立控制 summary 摘要生成模型，支持 `deepseek` / `ollama`。
+* `LLM_PROVIDER` 只控制最终 answer 生成模型，两者可以独立配置，互不覆盖。
 * summary 仅注入 Query Rewrite，用于帮助理解“那再高一点呢？”这类追问。
 * summary 不进入 `reference_text`。
 * summary 不作为最终回答的事实依据。
@@ -762,6 +764,7 @@ Demo 版
   * `summary_update_error`
 * summary 更新失败不会影响原本 RAG / chat 回答。
 * 更新前过滤 `low_confidence`、资料不足、未找到资料等兜底回答，避免把失败回答污染为记忆事实。
+* 当前仍不是全链路本地化：embedding、reranker、Query Rewrite 等环节仍可能使用云端 API。
 
 ### 未实现
 
@@ -776,7 +779,7 @@ Demo 版
 推荐表述：
 
 ```text
-我实现的是最小版 session summary memory：同一个 session_id 内，系统会把较早会话压缩成 SQLite summary，并在后续 Query Rewrite 中作为上下文辅助。它不会进入 reference_text，也不会作为事实依据，因此不会替代 RAG 检索证据。
+我实现的是最小版 session summary memory：同一个 session_id 内，系统会把较早会话压缩成 SQLite summary，并在后续 Query Rewrite 中作为上下文辅助。summary 摘要模型可以通过 MEMORY_SUMMARY_PROVIDER 在 deepseek / ollama 之间独立切换，不影响最终回答模型的 LLM_PROVIDER。它不会进入 reference_text，也不会作为事实依据，因此不会替代 RAG 检索证据。
 ```
 
 不要表述为：

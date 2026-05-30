@@ -150,6 +150,9 @@ MEMORY_RECENT_MESSAGES_KEEP = int(os.getenv("MEMORY_RECENT_MESSAGES_KEEP", "4"))
 # Target max summary length in characters.
 MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("MEMORY_SUMMARY_MAX_CHARS", "800"))
 
+# 控制 session summary 摘要生成模型，独立于最终回答的 LLM_PROVIDER。
+MEMORY_SUMMARY_PROVIDER = os.getenv("MEMORY_SUMMARY_PROVIDER", "deepseek").lower()
+
 
 
 

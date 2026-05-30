@@ -21,6 +21,19 @@ interface UsedChunk {
   rerank_score?: number;
 }
 
+interface MemoryDebug {
+  enabled?: boolean;
+  summary_exists?: boolean;
+  summary_used_for_query_rewrite?: boolean;
+  summarized_message_count?: number;
+  summary_preview?: string;
+  summary_updated?: boolean;
+  summary_update_reason?: string;
+  summary_update_error?: string | null;
+  summary_provider?: string;
+  memory_summary_provider?: string;
+}
+
 interface AnswerData {
   answer?: string;
   intent?: string;
@@ -31,6 +44,7 @@ interface AnswerData {
   answer_llm_provider?: string | null;
   answer_llm_model?: string | null;
   answer_llm_is_local?: boolean;
+  memory_debug?: MemoryDebug;
 }
 
 interface AskResponse {
@@ -61,6 +75,7 @@ export default function App() {
   const [result, setResult] = useState<AnswerData | null>(null);
 
   const chunks = useMemo(() => result?.used_chunks_debug ?? [], [result]);
+  const memoryDebug = result?.memory_debug;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -174,6 +189,56 @@ export default function App() {
               <div>
                 <dt>answer_llm_is_local</dt>
                 <dd>{displayValue(result.answer_llm_is_local)}</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article className="debug-panel memory-panel">
+            <div className="panel-title">
+              <h2>memory_debug</h2>
+              <span>session summary</span>
+            </div>
+            {/* memory_debug 是后端可选调试字段；缺失字段统一显示 "-"，避免旧响应报错。 */}
+            <dl className="memory-grid">
+              <div>
+                <dt>enabled</dt>
+                <dd>{displayValue(memoryDebug?.enabled)}</dd>
+              </div>
+              <div>
+                <dt>summary_exists</dt>
+                <dd>{displayValue(memoryDebug?.summary_exists)}</dd>
+              </div>
+              <div>
+                <dt>summary_used_for_query_rewrite</dt>
+                <dd>{displayValue(memoryDebug?.summary_used_for_query_rewrite)}</dd>
+              </div>
+              <div>
+                <dt>summary_updated</dt>
+                <dd>{displayValue(memoryDebug?.summary_updated)}</dd>
+              </div>
+              <div>
+                <dt>summary_update_reason</dt>
+                <dd>{displayValue(memoryDebug?.summary_update_reason)}</dd>
+              </div>
+              <div>
+                <dt>summary_update_error</dt>
+                <dd>{displayValue(memoryDebug?.summary_update_error)}</dd>
+              </div>
+              <div>
+                <dt>summarized_message_count</dt>
+                <dd>{displayValue(memoryDebug?.summarized_message_count)}</dd>
+              </div>
+              <div>
+                <dt>summary_provider</dt>
+                <dd>
+                  {displayValue(
+                    memoryDebug?.summary_provider ?? memoryDebug?.memory_summary_provider,
+                  )}
+                </dd>
+              </div>
+              <div className="wide">
+                <dt>summary_preview</dt>
+                <dd>{displayValue(memoryDebug?.summary_preview)}</dd>
               </div>
             </dl>
           </article>
