@@ -26,6 +26,9 @@ Current implemented capabilities include:
 - Main demo API: `POST /ask_langchain`
 - SQLite multi-turn conversation history
 - minimal session summary memory based on `session_id + SQLite`
+- minimal `/agent_demo` Controlled Tool Calling Agent Demo
+- fake / LLM planner switch via `AGENT_PLANNER_PROVIDER=fake / llm`
+- strict JSON `tool_call` planning with backend whitelist / schema / dangerous-tool authorization
 - chat / rag routing
 - Query Rewrite
 - FAISS + BM25 + RRF hybrid retrieval
@@ -38,6 +41,7 @@ Current implemented capabilities include:
 - Excel `sheet_name` / `row_number` metadata
 - `policy_clause` and `paragraph_then_overlap` chunk strategies
 - React + Vite + TypeScript frontend demo under `frontend/`
+  - supports RAG Q&A mode and Agent Demo mode
 
 ---
 
@@ -559,25 +563,27 @@ For the implemented minimal `memory_summary` feature:
 
 When implementing agent-related features, prefer small controlled agents over open-ended autonomous agents.
 
-A valid first-step agent integration may include:
+A valid minimal agent integration in this project may include:
 
-- `/agent_demo` endpoint
-- action selection such as:
-  - `chat`
-  - `rag`
-  - `checklist`
-  - `tool_call`
-- calling existing RAG logic as a tool
-- returning structured debug info
+- `/agent_demo` side-path endpoint
+- controlled `tool_call` planning
+- tool schema exposure to planner
+- backend tool whitelist validation
+- backend arguments schema validation
+- dangerous tool authorization before executor execution
+- calling existing RAG capability as a read-only tool
+- returning `agent_steps` and `agent_debug`
 
 Rules:
 
 - Do not replace the existing RAG endpoint.
 - Do not introduce complex multi-agent frameworks unless explicitly requested.
 - Do not claim full multi-agent capability unless implemented.
+- Do not claim full autonomous Agent capability unless implemented.
 - Keep tool calls explicit and explainable.
 - Validate tool input parameters before execution.
 - Prefer controlled workflow behavior over open-ended autonomous behavior.
+- Dangerous tools must require backend-owned authorization; model-generated arguments cannot authorize dangerous operations by themselves.
 
 ---
 
@@ -696,6 +702,8 @@ Allowed implemented claims:
 - React frontend demo
 - basic session memory based on `session_id` and SQLite conversation history
 - minimal session summary memory based on `session_id + SQLite`
+- minimal `/agent_demo` Controlled Tool Calling Agent Demo
+- read-only `search_knowledge_base` Agent tool that reuses existing RAG internals without replacing `/ask_langchain`
 
 Do not claim unless actually implemented:
 
@@ -707,6 +715,10 @@ Do not claim unless actually implemented:
 - vector memory
 - cross-session long-term memory retrieval
 - full multi-agent system
+- full autonomous Agent platform
+- production-grade tool permission system
+- real `rebuild_index` execution through `/agent_demo`
+- external API tools such as Feishu, Weibo, Xiaohongshu, or weather APIs
 - LoRA / QLoRA fine-tuning implementation
 - production-grade frontend management platform
 
@@ -812,14 +824,14 @@ Example for agent integration:
 Please read AGENTS.md and enter Feature Integration Mode.
 
 Goal:
-Add a lightweight /agent_demo endpoint.
-The agent should select between chat / rag / checklist actions.
-The rag action should reuse the existing RAG flow instead of replacing it.
+Add or extend the lightweight /agent_demo endpoint.
+The agent should demonstrate controlled tool calling: planner generates strict JSON tool_call, backend validates whitelist/schema/authorization, and executor runs the selected tool.
+The RAG capability may be exposed as a read-only tool without replacing /ask_langchain.
 
 Requirements:
 1. Do not replace /ask_langchain.
-2. Keep tool calling explicit and explainable.
-3. Return debug info showing selected action and reason.
+2. Keep tool calling explicit, validated, and explainable.
+3. Return agent_steps / agent_debug showing planner output, validation, authorization, execution, or blocked result.
 4. Create .ai_plans/agent_demo_plan.md before coding.
 5. Provide design first and wait for confirmation.
 ```

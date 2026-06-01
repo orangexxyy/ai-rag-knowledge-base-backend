@@ -3,6 +3,8 @@ import { FormEvent, useMemo, useState } from "react";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+type DemoMode = "rag" | "agent";
+
 interface ChunkMetadata {
   source_file?: string;
   file_type?: string;
@@ -47,10 +49,35 @@ interface AnswerData {
   memory_debug?: MemoryDebug;
 }
 
-interface AskResponse {
+interface AgentStep {
+  step?: number;
+  stage?: string;
+  status?: string;
+  tool_name?: string;
+  tool_call?: unknown;
+  result?: unknown;
+}
+
+interface AgentDebug {
+  planner?: string;
+  available_tools?: string[];
+  allow_rebuild_index?: boolean;
+  blocked?: boolean;
+  tool_name?: string | null;
+  execution_status?: string | null;
+}
+
+interface AgentData {
+  answer?: string;
+  agent_mode?: string;
+  agent_steps?: AgentStep[];
+  agent_debug?: AgentDebug;
+}
+
+interface ApiResponse<T> {
   success: boolean;
   message?: string;
-  data?: AnswerData;
+  data?: T;
   error?: string | null;
 }
 
@@ -67,15 +94,32 @@ function summarizeText(text = ""): string {
   return compactText.length > 180 ? `${compactText.slice(0, 180)}...` : compactText || "-";
 }
 
+function formatJson(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export default function App() {
+  const [mode, setMode] = useState<DemoMode>("rag");
   const [question, setQuestion] = useState("产品入门训练营报名截止是什么时候？");
   const [sessionId, setSessionId] = useState("frontend_demo_001");
+  const [allowRebuildIndex, setAllowRebuildIndex] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<AnswerData | null>(null);
+  const [ragResult, setRagResult] = useState<AnswerData | null>(null);
+  const [agentResult, setAgentResult] = useState<AgentData | null>(null);
 
-  const chunks = useMemo(() => result?.used_chunks_debug ?? [], [result]);
-  const memoryDebug = result?.memory_debug;
+  const chunks = useMemo(() => ragResult?.used_chunks_debug ?? [], [ragResult]);
+  const memoryDebug = ragResult?.memory_debug;
+  const agentSteps = agentResult?.agent_steps ?? [];
+  const agentDebug = agentResult?.agent_debug;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,25 +138,41 @@ export default function App() {
 
     setLoading(true);
     setError("");
-    setResult(null);
+    setRagResult(null);
+    setAgentResult(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/ask_langchain`, {
+      const endpoint = mode === "rag" ? "/ask_langchain" : "/agent_demo";
+      // RAG 模式保持原有请求体；Agent 模式额外携带后端授权上下文。
+      const requestBody =
+        mode === "rag"
+          ? {
+              question: trimmedQuestion,
+              session_id: trimmedSessionId,
+            }
+          : {
+              question: trimmedQuestion,
+              session_id: trimmedSessionId,
+              allow_rebuild_index: allowRebuildIndex,
+            };
+
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: trimmedQuestion,
-          session_id: trimmedSessionId,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
-      const payload = (await response.json()) as AskResponse;
+      const payload = (await response.json()) as ApiResponse<AnswerData | AgentData>;
 
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || payload.message || `请求失败 (${response.status})`);
       }
 
-      setResult(payload.data ?? null);
+      if (mode === "rag") {
+        setRagResult((payload.data as AnswerData) ?? null);
+      } else {
+        setAgentResult((payload.data as AgentData) ?? null);
+      }
     } catch (requestError) {
       const message =
         requestError instanceof Error ? requestError.message : "请求后端服务失败。";
@@ -125,14 +185,31 @@ export default function App() {
   return (
     <main className="page">
       <header className="header">
-        <p className="eyebrow">FastAPI + RAG</p>
+        <p className="eyebrow">FastAPI + RAG + Agent</p>
         <h1>企业知识库问答 Demo</h1>
         <p className="subtitle">
-          向知识库提问，并查看检索命中的 chunk 与打分明细。
+          在 RAG 问答和 Controlled Tool Calling Agent Demo 之间切换，展示检索证据与工具调用步骤。
         </p>
       </header>
 
       <form className="ask-form" onSubmit={handleSubmit}>
+        <div className="mode-switch" role="group" aria-label="Demo mode">
+          <button
+            type="button"
+            className={mode === "rag" ? "active" : ""}
+            onClick={() => setMode("rag")}
+          >
+            RAG 问答
+          </button>
+          <button
+            type="button"
+            className={mode === "agent" ? "active" : ""}
+            onClick={() => setMode("agent")}
+          >
+            Agent Demo
+          </button>
+        </div>
+
         <label>
           <span>问题</span>
           <textarea
@@ -142,6 +219,7 @@ export default function App() {
             rows={4}
           />
         </label>
+
         <div className="form-footer">
           <label className="session-field">
             <span>session_id</span>
@@ -151,44 +229,56 @@ export default function App() {
               placeholder="frontend_demo_001"
             />
           </label>
-          <button type="submit" disabled={loading}>
+
+          {mode === "agent" && (
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={allowRebuildIndex}
+                onChange={(event) => setAllowRebuildIndex(event.target.checked)}
+              />
+              <span>允许执行重建索引测试</span>
+            </label>
+          )}
+
+          <button className="submit-button" type="submit" disabled={loading}>
             {loading ? "查询中..." : "发送问题"}
           </button>
         </div>
       </form>
 
-      {loading && <div className="notice loading">正在检索并生成回答，请稍候...</div>}
+      {loading && <div className="notice loading">正在请求后端并生成展示结果，请稍等...</div>}
       {error && <div className="notice error">{error}</div>}
 
-      {result && (
+      {ragResult && (
         <section className="results">
           <article className="answer-card">
             <h2>回答</h2>
-            <p className="answer">{displayValue(result.answer)}</p>
+            <p className="answer">{displayValue(ragResult.answer)}</p>
             <dl className="status-grid">
               <div>
                 <dt>intent</dt>
-                <dd>{displayValue(result.intent)}</dd>
+                <dd>{displayValue(ragResult.intent)}</dd>
               </div>
               <div>
                 <dt>retriever_status</dt>
-                <dd>{displayValue(result.retriever_status)}</dd>
+                <dd>{displayValue(ragResult.retriever_status)}</dd>
               </div>
               <div className="wide">
                 <dt>retrieval_query</dt>
-                <dd>{displayValue(result.retrieval_query)}</dd>
+                <dd>{displayValue(ragResult.retrieval_query)}</dd>
               </div>
               <div>
                 <dt>answer_llm_provider</dt>
-                <dd>{displayValue(result.answer_llm_provider)}</dd>
+                <dd>{displayValue(ragResult.answer_llm_provider)}</dd>
               </div>
               <div>
                 <dt>answer_llm_model</dt>
-                <dd>{displayValue(result.answer_llm_model)}</dd>
+                <dd>{displayValue(ragResult.answer_llm_model)}</dd>
               </div>
               <div>
                 <dt>answer_llm_is_local</dt>
-                <dd>{displayValue(result.answer_llm_is_local)}</dd>
+                <dd>{displayValue(ragResult.answer_llm_is_local)}</dd>
               </div>
             </dl>
           </article>
@@ -297,6 +387,99 @@ export default function App() {
                       <div>
                         <dt>rerank_score</dt>
                         <dd>{formatScore(chunk.rerank_score)}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
+      )}
+
+      {agentResult && (
+        <section className="results">
+          <article className="answer-card">
+            <h2>Agent 回答</h2>
+            <p className="answer">{displayValue(agentResult.answer)}</p>
+            <dl className="status-grid">
+              <div className="wide">
+                <dt>agent_mode</dt>
+                <dd>{displayValue(agentResult.agent_mode)}</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article className="debug-panel agent-debug-panel">
+            <div className="panel-title">
+              <h2>agent_debug</h2>
+              <span>controlled tool calling</span>
+            </div>
+            {/* Agent debug 用于面试演示：展示 planner、工具白名单、授权上下文和执行状态。 */}
+            <dl className="agent-debug-grid">
+              <div>
+                <dt>planner</dt>
+                <dd>{displayValue(agentDebug?.planner)}</dd>
+              </div>
+              <div>
+                <dt>available_tools</dt>
+                <dd>{displayValue(agentDebug?.available_tools?.join(", "))}</dd>
+              </div>
+              <div>
+                <dt>allow_rebuild_index</dt>
+                <dd>{displayValue(agentDebug?.allow_rebuild_index)}</dd>
+              </div>
+              <div>
+                <dt>blocked</dt>
+                <dd>{displayValue(agentDebug?.blocked)}</dd>
+              </div>
+              <div>
+                <dt>tool_name</dt>
+                <dd>{displayValue(agentDebug?.tool_name)}</dd>
+              </div>
+              <div>
+                <dt>execution_status</dt>
+                <dd>{displayValue(agentDebug?.execution_status)}</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article className="debug-panel">
+            <div className="panel-title">
+              <h2>agent_steps</h2>
+              <span>{agentSteps.length} steps</span>
+            </div>
+
+            {agentSteps.length === 0 ? (
+              <p className="empty">当前响应未包含 agent_steps。</p>
+            ) : (
+              <div className="agent-step-list">
+                {agentSteps.map((step, index) => (
+                  <section className="agent-step-card" key={`${step.stage}-${index}`}>
+                    <div className="agent-step-heading">
+                      <h3>Step {displayValue(step.step ?? index + 1)}</h3>
+                      <span>{displayValue(step.status)}</span>
+                    </div>
+                    <dl className="agent-step-grid">
+                      <div>
+                        <dt>stage</dt>
+                        <dd>{displayValue(step.stage)}</dd>
+                      </div>
+                      <div>
+                        <dt>tool_name</dt>
+                        <dd>{displayValue(step.tool_name)}</dd>
+                      </div>
+                      <div>
+                        <dt>tool_call</dt>
+                        <dd>
+                          <pre>{formatJson(step.tool_call)}</pre>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>result</dt>
+                        <dd>
+                          <pre>{formatJson(step.result)}</pre>
+                        </dd>
                       </div>
                     </dl>
                   </section>

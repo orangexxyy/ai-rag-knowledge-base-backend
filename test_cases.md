@@ -2,6 +2,7 @@
 
 > 说明：
 > - 当前推荐测试接口：`POST /ask_langchain`
+> - Agent / Tool Calling 演示接口：`POST /agent_demo`，它是旁路接口，不替代 `/ask_langchain`
 > - 当前项目已升级为资料目录入库模式：`KNOWLEDGE_DIR = data/raw_docs`
 > - 当前已支持：txt + 文本型 PDF + Excel
 > - PDF 已支持 page metadata
@@ -10,6 +11,7 @@
 >   - `policy_clause`：通用“xxx制度条款A/B/C”条款级切分
 >   - `paragraph_then_overlap`：通用段落 + overlap 切分
 > - 当前最终回答模型可通过 `.env` 切换：DeepSeek / Ollama
+> - 当前 Agent planner 可通过 `.env` 切换：`AGENT_PLANNER_PROVIDER=fake / llm`
 
 ---
 
@@ -19,6 +21,7 @@
 
 ```text
 POST /ask_langchain
+POST /agent_demo
 ```
 
 ### 1.2 资料目录
@@ -79,6 +82,26 @@ data.answer_source
 data.answer_llm_provider
 data.answer_llm_model
 data.answer_llm_is_local
+```
+
+### 1.5 Agent Demo 观察字段
+
+```text
+data.answer
+data.agent_mode
+data.agent_steps
+data.agent_steps[].step
+data.agent_steps[].stage
+data.agent_steps[].status
+data.agent_steps[].tool_name
+data.agent_steps[].tool_call
+data.agent_steps[].result
+data.agent_debug.planner
+data.agent_debug.available_tools
+data.agent_debug.allow_rebuild_index
+data.agent_debug.blocked
+data.agent_debug.tool_name
+data.agent_debug.execution_status
 ```
 
 ---
@@ -225,17 +248,44 @@ data.answer_llm_is_local
 
 ---
 
-## 8. 前端 Demo 测试（F001-F003）
+## 8. Agent Demo 测试（A001-A009）
+
+> 当前 `/agent_demo` 是最小版 Controlled Tool Calling Agent Demo。它不替代 `/ask_langchain`，也不修改 RAG 主链路。
+
+| case_id | 模块 | 配置 / 请求 | 当前问题 | 预期结果 | 重点观察字段 | 是否通过 |
+|---|---|---|---|---|---|---|
+| A001 | 查询索引状态 | `AGENT_PLANNER_PROVIDER=fake` | 帮我检查知识库状态 | 调用 `get_index_info`，返回索引状态 | `agent_steps[].tool_call.tool_name=get_index_info`、`agent_debug.planner=fake` | 通过 |
+| A002 | 查询知识库问题 | fake 或 llm | 事假怎么申请？ | 调用 `search_knowledge_base`，返回只读 RAG tool 结果 | `retriever_status`、`answer`、`reference_preview` 或 result summary | 通过 |
+| A003 | 危险重建未授权 | `allow_rebuild_index=false` | 请重建知识库索引 | 后端 blocked，不执行 executor 重建 | `blocked=true`、`dangerous_tool_authorization.status=blocked` | 通过 |
+| A004 | 危险重建授权通过但不真实执行 | `allow_rebuild_index=true` | 请重建知识库索引 | 通过双层校验，但 executor 返回 `not_implemented_for_safety` | `execution_status=not_implemented_for_safety`、`rebuild_executed=false` | 通过 |
+| A005 | 模型 confirm=true 但 request 未授权 | llm 或 fake | 请重建知识库索引 | 仍被后端 blocked | `allow_rebuild_index=false`、`blocked=true` | 通过 |
+| A006 | 未知工具名拒绝 | 直接测试 validator 或模拟 planner 输出 | `tool_name=run_shell` | 拒绝执行 | `error_code=unknown_tool` | 通过 |
+| A007 | 参数错误拒绝 | 直接测试 validator | `rebuild_index.confirm="yes"` | schema validation 失败 | `error_code=invalid_argument_type` | 通过 |
+| A008 | planner strict JSON 失败 | `AGENT_PLANNER_PROVIDER=llm` 且模型输出非法 JSON | 任意问题 | 返回 structured error，不执行任何工具 | `planner_parse_error`、无 executor 步骤 | 通过 |
+| A009 | `/ask_langchain` 兼容 | 普通 RAG 问题 | 事假怎么申请？ | 旧接口不受影响 | `/ask_langchain` route 仍存在，RAG response 正常 | 通过 |
+
+### Agent Demo 能力边界
+
+1. `search_knowledge_base` 是只读 RAG tool，复用 `get_embedding`、`hybrid_search`、reranker、`run_rag_chain`，从 `app.state` 读取已加载索引对象。
+2. `search_knowledge_base` 不复制完整 `/ask_langchain`，不包含 session history、Query Rewrite、semantic router、memory_summary、数据库写入。
+3. `rebuild_index` 已实现双层校验，但当前不真实重建索引，授权通过后返回 `not_implemented_for_safety`。
+4. 当前不是完整自主 Agent，不是 Multi-Agent，也没有外部 API 工具或生产级权限系统。
+
+---
+
+## 9. 前端 Demo 测试（F001-F005）
 
 | case_id | 测试问题 | 预期页面结果 | 重点观察字段 | 是否通过 |
 |---|---|---|---|---|
 | F001 | 产品入门训练营报名截止是什么时候？ | 页面展示 `answer`，并展示 xlsx / 培训报名表 / `row_number` | `file_type=xlsx`、`sheet_name=培训报名表`、`row_number` | 是 |
 | F002 | 事假怎么申请？ | 页面展示 `retriever_status=matched`，并展示 `policy_clause` 或相关来源 metadata | `chunk_strategy`、`source_file`、`page` | 是 |
 | F003 | 公司年终奖发放规则是什么？ | 页面展示 `retriever_status=low_confidence`，`used_chunks_debug` 为 `0 chunks` | `retriever_status`、调试面板数量 | 是 |
+| F004 | 帮我检查知识库状态 | 切换 Agent Demo 后展示 `answer`、`agent_steps`、`agent_debug` | `agent_debug.planner`、`agent_steps[].stage` | 是 |
+| F005 | 请重建知识库索引 | Agent Demo checkbox 默认关闭时应展示 blocked；勾选后仍返回 `not_implemented_for_safety` | `allow_rebuild_index`、`blocked`、`execution_status` | 是 |
 
 ---
 
-## 9. 当前测试结论
+## 10. 当前测试结论
 
 当前企业知识库 RAG 项目已经验证：
 
@@ -255,10 +305,13 @@ data.answer_llm_is_local
 13. used_chunks_debug 可以追溯 source_file / file_type / page / sheet_name / row_number / chunk_strategy
 14. DeepSeek / Ollama 最终回答模型切换正常
 15. Router 样本需要随着知识库业务范围同步维护
+16. `/agent_demo` 旁路接口已验证，不替代 `/ask_langchain`
+17. Controlled Tool Calling Agent Demo 的 fake / llm planner、tool whitelist、arguments schema、dangerous tool authorization 和 `agent_steps` 可观测链路已验证
+18. `search_knowledge_base` 已作为只读 RAG tool 接入，`rebuild_index` 当前仍不真实执行
 ```
 ---
 
-## 10. Memory Summary 专项测试（M001-M011）
+## 11. Memory Summary 专项测试（M001-M011）
 
 > 当前 memory 能力定位：最小版 session summary memory。它只在单个 `session_id` 内压缩较早历史，并作为 Query Rewrite 辅助上下文；不属于完整 long-term memory、user profile memory 或 vector memory。
 

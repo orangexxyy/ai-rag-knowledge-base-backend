@@ -120,7 +120,7 @@ knowledge.txt 单文件 RAG Demo
 2. 根据岗位 JD 微调简历
 3. 准备项目介绍和面试追问回答
 4. 补齐 Memory / Agent / Transformer / PyTorch / LoRA 等岗位关键词的面试级理解
-5. 通过 Codex 小步集成能明显增强面试表达的功能，例如继续完善已集成的 memory_summary，或后续增加 agent_demo
+5. 通过 Codex 小步集成能明显增强面试表达的功能，例如继续完善已集成的 memory_summary 和最小版 agent_demo
 6. 不再为了“把所有技术都学完”而推迟投递
 
 当前不建议优先做：
@@ -160,6 +160,10 @@ knowledge.txt 单文件 RAG Demo
 * 已实现 Excel sheet_name / row_number metadata
 * 已实现 policy_clause 条款级 chunk
 * 已实现 React + Vite + TypeScript 前端 Demo
+* 已实现 `/agent_demo` 旁路接口，不替代 `/ask_langchain`
+* 已实现最小版 Controlled Tool Calling Agent Demo：fake planner / llm planner、strict JSON `tool_call`、工具白名单校验、参数校验、危险工具授权、executor 执行和 `agent_steps` 可观测
+* 已实现 Agent tools：`get_index_info`、`search_knowledge_base`、`rebuild_index`
+* 已实现前端 RAG 问答 / Agent Demo 模式切换，并展示 `agent_steps` / `agent_debug`
 * 已使用 Codex 辅助完成前端 Demo、文档更新、提交收口
 * 已通过 AGENTS.md 约束 AI 编程工具的项目边界
 
@@ -171,6 +175,9 @@ knowledge.txt 单文件 RAG Demo
 * vector memory 已经完成
 * 跨 session 长期记忆检索已经完成
 * 复杂 Multi-Agent 已经完成
+* 完整自主 Agent 平台已经完成
+* 生产级 Tool Calling 权限系统已经完成
+* `rebuild_index` 已经可以在 Agent 中真实重建索引
 * LoRA / QLoRA 微调已经完成
 * OCR 扫描型 PDF 已经完成
 * Word Loader 已经完成
@@ -329,13 +336,15 @@ Workflow 解决受控步骤和稳定落地
 Tool Calling 解决调用外部系统
 ```
 
-后续如果做代码项目增强，优先考虑：
+当前代码项目已实现：
 
 ```text
 轻量 /agent_demo
 ```
 
-而不是上来做复杂 Multi-Agent。
+它是最小版 Controlled Tool Calling Agent Demo：planner 生成 strict JSON `tool_call`，后端做白名单、参数 schema、危险工具授权和 executor 执行。`search_knowledge_base` 是只读 RAG tool，复用现有 `get_embedding`、`hybrid_search`、reranker、`run_rag_chain`，但不复制完整 `/ask_langchain` 的 session history、Query Rewrite、semantic router、memory_summary 和数据库写入。
+
+后续仍不建议上来做复杂 Multi-Agent。
 
 ### Multi-Agent
 
@@ -1305,6 +1314,13 @@ user profile memory
 vector memory
 跨 session 长期记忆检索
 memory 与 RAG 的统一向量检索系统
+完整自主 Agent
+Multi-Agent
+外部 API 工具（飞书、微博、小红书、天气 API）
+Agent 中真实执行 rebuild_index
+动态 user_id / role / permission 工具表
+生产级权限系统
+Agent 完整复刻 /ask_langchain 的多轮 memory 和 router 能力
 ```
 
 ---
@@ -1323,6 +1339,8 @@ Excel 没有直接拼成长文本，而是按 sheet 和 row 读取，把每一�
 最终 chunk_records 会保存 text、embedding 和 metadata。检索命中后，used_chunks_debug 可以展示 source_file、file_type、page、sheet_name、row_number、chunk_strategy、FAISS/BM25/RRF/rerank 分数，方便解释系统为什么这样回答。
 
 接入 Excel 后，我还补充了 Router 的 RAG 样本和关键词，因为知识库范围变化后，用户问法也会变化。Router 不是一次写完永远不用维护，而是要随着知识库业务范围同步更新。
+
+我还做了一个旁路的最小版 `/agent_demo`：它不替代 `/ask_langchain`，而是展示 Controlled Tool Calling。LLM planner 只负责根据 question 和 tool schemas 生成 strict JSON tool_call，后端负责工具白名单、参数校验、危险工具双层授权和 executor 执行。当前的 search_knowledge_base 是只读 RAG tool，复用现有 embedding、hybrid search、reranker 和 RAG answer chain；rebuild_index 已有授权校验，但仍不真实执行重建。
 ```
 
 ---
@@ -1354,8 +1372,14 @@ GitHub 提交
 
 当前项目已新增 `frontend/` 轻量前端 Demo，技术栈为 React + Vite + TypeScript。
 
-前端不是核心 RAG 逻辑，而是现有接口能力的展示层。它直接调用
-`POST /ask_langchain`，将 JSON 响应中的回答、检索状态和调试数据以页面形式呈现。
+前端不是核心 RAG 逻辑，而是现有接口能力的展示层。它支持 RAG 问答 / Agent Demo 两种模式：
+
+```text
+RAG 问答：POST /ask_langchain
+Agent Demo：POST /agent_demo
+```
+
+RAG 模式将 JSON 响应中的回答、检索状态和调试数据以页面形式呈现。
 
 前端的主要价值是把 RAG 可解释性信息可视化，特别是：
 
@@ -1365,6 +1389,8 @@ source_file / file_type / page
 sheet_name / row_number / chunk_strategy
 FAISS / BM25 / RRF / rerank 分数
 ```
+
+Agent Demo 模式会发送 `question`、`session_id` 和 `allow_rebuild_index`。页面中的“允许执行重建索引测试”checkbox 默认关闭，响应区展示 `answer`、`agent_steps` 和 `agent_debug`，用于面试演示 planner、tool_call、工具校验、危险工具授权和 executor 执行结果。
 
 为了让 Vite 开发页面能够从浏览器访问 FastAPI 接口，CORS 修改仅在
 `app/main.py` 中完成，允许 `http://127.0.0.1:5173` 和

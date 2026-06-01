@@ -64,6 +64,33 @@ h1 {
   padding: 22px;
 }
 
+.mode-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid #d9e4f5;
+  border-radius: 10px;
+  background: #f5f7fb;
+}
+
+.mode-switch button {
+  min-width: 112px;
+  height: 36px;
+  border-radius: 8px;
+  color: #42536b;
+  background: transparent;
+}
+
+.mode-switch button:hover:not(:disabled) {
+  background: #eaf0ff;
+}
+
+.mode-switch button.active {
+  color: #fff;
+  background: #2463eb;
+}
+
 label {
   display: flex;
   flex-direction: column;
@@ -110,7 +137,21 @@ input:focus {
   flex: 1;
 }
 
-button {
+.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 45px;
+  white-space: nowrap;
+}
+
+.checkbox-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2463eb;
+}
+
+.submit-button {
   min-width: 124px;
   height: 45px;
   border: 0;
@@ -121,11 +162,11 @@ button {
   font-weight: 600;
 }
 
-button:hover:not(:disabled) {
+.submit-button:hover:not(:disabled) {
   background: #1854d9;
 }
 
-button:disabled {
+.submit-button:disabled {
   background: #91aef2;
   cursor: wait;
 }
@@ -173,7 +214,9 @@ h2 {
 
 .status-grid,
 .detail-grid,
-.memory-grid {
+.memory-grid,
+.agent-debug-grid,
+.agent-step-grid {
   display: grid;
   gap: 12px;
   margin: 0;
@@ -191,9 +234,19 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.agent-debug-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.agent-step-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .status-grid div,
 .detail-grid div,
-.memory-grid div {
+.memory-grid div,
+.agent-debug-grid div,
+.agent-step-grid div {
   min-width: 0;
   padding: 10px 12px;
   border-radius: 8px;
@@ -207,6 +260,10 @@ h2 {
 
 .memory-panel {
   border-color: #d9e4f5;
+}
+
+.agent-debug-panel {
+  border-color: #d7e7df;
 }
 
 dt {
@@ -246,15 +303,56 @@ dd {
   gap: 14px;
 }
 
-.chunk-card {
+.chunk-card,
+.agent-step-card {
   padding: 16px;
   border: 1px solid #e3eaf4;
   border-radius: 12px;
 }
 
-.chunk-card h3 {
+.chunk-card h3,
+.agent-step-card h3 {
   margin: 0 0 10px;
   font-size: 15px;
+}
+
+.agent-step-list {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-step-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.agent-step-heading h3 {
+  margin: 0;
+}
+
+.agent-step-heading span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: #1854d9;
+  background: #eaf0ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  color: #132235;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .chunk-text {
@@ -279,9 +377,25 @@ dd {
     align-items: stretch;
   }
 
+  .mode-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mode-switch button {
+    width: 100%;
+  }
+
+  .checkbox-field {
+    justify-content: flex-start;
+    white-space: normal;
+  }
+
   .status-grid,
   .detail-grid,
-  .memory-grid {
+  .memory-grid,
+  .agent-debug-grid,
+  .agent-step-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -289,7 +403,9 @@ dd {
 @media (max-width: 480px) {
   .status-grid,
   .detail-grid,
-  .memory-grid {
+  .memory-grid,
+  .agent-debug-grid,
+  .agent-step-grid {
     grid-template-columns: 1fr;
   }
 }

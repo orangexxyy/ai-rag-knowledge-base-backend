@@ -2,7 +2,7 @@
 
 ## 1. 项目简介
 
-本项目是一个基于 **FastAPI + RAG + Document Ingestion Pipeline + FAISS / BM25 / RRF 混合检索 + DashScope Reranker + LangChain + SQLite 多轮会话 + 最小版 Session Summary Memory + LLM Provider 可切换** 的企业知识库问答后端项目。
+本项目是一个基于 **FastAPI + RAG + Document Ingestion Pipeline + FAISS / BM25 / RRF 混合检索 + DashScope Reranker + LangChain + SQLite 多轮会话 + 最小版 Session Summary Memory + Controlled Tool Calling Agent Demo + LLM Provider 可切换** 的企业知识库问答后端项目。
 
 项目面向企业内部知识库场景，例如：
 
@@ -38,7 +38,10 @@ IT 支持制度
 
 ```text
 POST /ask_langchain
+POST /agent_demo
 ```
+
+其中 `/ask_langchain` 是主 RAG 问答接口；`/agent_demo` 是旁路 Controlled Tool Calling Agent Demo，用于展示工具选择、参数校验、危险工具授权和 `agent_steps` 可观测性，不替代 `/ask_langchain`，也不改动 RAG 主链路。
 
 ---
 
@@ -59,6 +62,7 @@ POST /ask_langchain
 8. 如何避免资料不足时大模型硬答
 9. 如何通过 debug 字段解释检索、重排和回答来源
 10. 如何用最小版 session summary memory 辅助多轮 Query Rewrite
+11. 如何用最小版 Controlled Tool Calling Agent Demo 展示 tool_call、工具白名单、参数校验、危险工具授权和执行链路
 ```
 
 ---
@@ -715,14 +719,14 @@ http://127.0.0.1:8000/docs
 
 ### 14.6 前端 Demo
 
-`frontend/` 是基于 React + Vite + TypeScript 的轻量展示页面，用于调用已有的：
+`frontend/` 是基于 React + Vite + TypeScript 的轻量展示页面，支持两种模式：
 
 ```text
-POST /ask_langchain
+RAG 问答：POST /ask_langchain
+Agent Demo：POST /agent_demo
 ```
 
-页面会展示 `answer`、`intent`、`retriever_status`、`retrieval_query` 和
-`used_chunks_debug`。其中调试面板重点用于呈现 RAG 的可解释性信息：
+RAG 问答模式会展示 `answer`、`intent`、`retriever_status`、`retrieval_query`、`memory_debug` 和 `used_chunks_debug`。其中调试面板重点用于呈现 RAG 的可解释性信息：
 
 ```text
 source_file
@@ -733,6 +737,18 @@ row_number
 chunk_strategy
 FAISS / BM25 / RRF / rerank 分数
 ```
+
+Agent Demo 模式会发送：
+
+```json
+{
+  "question": "...",
+  "session_id": "frontend_demo_001",
+  "allow_rebuild_index": false
+}
+```
+
+页面提供“允许执行重建索引测试”checkbox，默认不勾选。Agent Demo 响应会展示 `answer`、`agent_mode`、`agent_steps` 和 `agent_debug`，用于演示 controlled tool calling 的 planner、tool_call、工具白名单校验、参数校验、危险工具授权和 executor 执行结果。
 
 启动后端：
 
@@ -832,6 +848,14 @@ used_chunks_debug 可以解释命中来源
 21. document_pipeline_version / metadata_schema_version 索引版本校验
 22. Router 样本补充，支持表格型资料查询进入 RAG
 23. 最小版 session summary memory，summary 只用于 Query Rewrite
+24. `/agent_demo` 旁路接口，不替代 `/ask_langchain`
+25. Controlled Tool Calling Agent Demo：支持 fake planner 和 LLM planner
+26. `AGENT_PLANNER_PROVIDER=fake / llm` planner 切换
+27. LLM planner 根据 question + tool schemas 生成 strict JSON `tool_call`
+28. tool whitelist validation / arguments schema validation / dangerous tool authorization
+29. `agent_steps` 和 `agent_debug` 可观测字段
+30. Agent tools：`get_index_info` / `search_knowledge_base` / `rebuild_index`
+31. 前端支持 RAG 问答 / Agent Demo 模式切换，并展示 `agent_steps`
 ```
 
 ---
@@ -854,6 +878,12 @@ used_chunks_debug 可以解释命中来源
 9. 文档版本管理目前只保留 version 字段，尚未实现多版本过滤
 10. section_heading 小标题切分尚未实现
 11. 重复资料去重尚未实现
+12. `/agent_demo` 是最小版 controlled tool agent，不是完整自主 Agent 平台
+13. Multi-Agent 未实现
+14. 外部 API 工具未实现，例如飞书、微博、小红书、天气 API
+15. `rebuild_index` 在 `/agent_demo` 中仍不真实执行重建；授权通过后返回 `not_implemented_for_safety`
+16. 尚未实现动态 user_id / role / permission 工具表或生产级权限系统
+17. Agent 的 `search_knowledge_base` 不完整复刻 `/ask_langchain` 的 session history、Query Rewrite、semantic router、memory_summary 和数据库写入能力
 ```
 
 ---
@@ -898,7 +928,7 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 ## 20. 一句话总结
 
 ```text
-这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话、最小版 session summary memory 和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践能力。
+这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话、最小版 session summary memory、旁路 `/agent_demo` Controlled Tool Calling Agent Demo 和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践与最小版工具调用能力。
 ```
 
 ---
@@ -948,4 +978,54 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 
 ```text
 项目实现了一个最小版 session summary memory：在单个 session_id 内使用 SQLite 保存会话摘要，按阈值用 LLM 压缩较早历史，并仅把 summary 作为 Query Rewrite 的辅助上下文，不作为知识库证据。
+```
+
+---
+
+## 22. 最小版 Controlled Tool Calling Agent Demo
+
+当前项目已实现旁路接口 `POST /agent_demo`，用于展示 controlled tool calling。它不替代 `/ask_langchain`，也不修改 RAG 主链路。
+
+已实现能力：
+
+- 支持 `AGENT_PLANNER_PROVIDER=fake / llm`。
+- fake planner 用于本地链路测试和未配置模型时的 fallback。
+- LLM planner 根据 user question + tool schemas 生成 strict JSON `tool_call`，只允许包含 `tool_name` 和 `arguments`。
+- 后端统一执行 tool whitelist validation、arguments schema validation、dangerous tool authorization 和 executor。
+- 返回 `answer`、`agent_steps`、`agent_debug`，用于观察 planner、校验、授权、执行和 blocked 结果。
+
+当前工具：
+
+```text
+get_index_info
+search_knowledge_base
+rebuild_index
+```
+
+`search_knowledge_base` 当前是只读 RAG tool：复用现有 `get_embedding`、`hybrid_search`、reranker 和 `run_rag_chain`，从 `app.state` 读取已加载的索引对象。它不复制完整 `/ask_langchain`，也不包含 session history、Query Rewrite、semantic router、memory_summary 或数据库写入。
+
+`rebuild_index` 当前已有双层校验：
+
+```text
+tool_call.arguments.confirm == true
+AND
+request.allow_rebuild_index == true
+```
+
+但它仍不真实执行重建。授权通过后返回 `not_implemented_for_safety`，用于面试演示“危险工具需要后端授权和安全执行边界”。
+
+当前未实现，也不应夸大为：
+
+- 完整自主 Agent。
+- Multi-Agent。
+- 外部 API 工具，例如飞书、微博、小红书、天气 API。
+- 真实执行 `rebuild_index`。
+- 动态 user_id / role / permission 工具表。
+- 生产级权限系统。
+- Agent 完整复刻 `/ask_langchain` 的多轮 memory 和 router 能力。
+
+推荐表述：
+
+```text
+项目实现了一个最小版 Controlled Tool Calling Agent Demo：LLM planner 只生成 strict JSON tool_call，后端负责工具白名单、参数 schema、危险工具授权和 executor 执行；RAG 被封装成一个只读工具，主接口 /ask_langchain 不受影响。
 ```

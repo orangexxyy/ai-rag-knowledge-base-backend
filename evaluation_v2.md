@@ -1,8 +1,8 @@
 # 企业知识库 RAG 项目阶段测试结果记录（evaluation_v2）
 
 > 测试日期：2026-05-26  
-> 项目阶段：企业资料入库与预处理增强阶段  
-> 当前目标：验证 `txt + 文本型 PDF + Excel` 是否能够统一进入 RAG 主链路，并在检索结果中保留来源追溯信息。  
+> 项目阶段：企业资料入库、最小版 memory、Controlled Tool Calling Agent Demo 阶段  
+> 当前目标：验证 `txt + 文本型 PDF + Excel` 是否能够统一进入 RAG 主链路，并记录 `/agent_demo` 旁路接口的工具调用、安全校验和可观测性边界。  
 > 说明：本文是阶段性人工测试结果整理，不等同于完整自动化测试报告。详细测试样本表见 `test_cases.md`。
 
 ---
@@ -52,6 +52,19 @@ Excel .xlsx
 → used_chunks_debug 返回来源与调试字段
 ```
 
+当前已验证的旁路 Agent Demo：
+
+```text
+POST /agent_demo
+→ fake / llm planner
+→ strict JSON tool_call
+→ tool whitelist validation
+→ arguments schema validation
+→ dangerous tool authorization
+→ executor
+→ agent_steps / agent_debug
+```
+
 ---
 
 ## 2. 测试环境说明
@@ -60,6 +73,7 @@ Excel .xlsx
 
 ```text
 POST /ask_langchain
+POST /agent_demo
 ```
 
 进行人工接口测试。
@@ -68,6 +82,8 @@ POST /ask_langchain
 
 ```text
 LLM_PROVIDER=ollama
+AGENT_PLANNER_PROVIDER=fake
+AGENT_PLANNER_PROVIDER=llm
 ```
 
 返回中可观察字段包括：
@@ -510,10 +526,13 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 
 ```text
 1. 前端可以正常访问 http://127.0.0.1:5173。
-2. 页面可以调用后端 POST /ask_langchain 并展示回答及检索状态。
+2. 页面可以在 RAG 问答模式调用后端 POST /ask_langchain 并展示回答及检索状态。
 3. Excel 问题“产品入门训练营报名截止是什么时候？”能够在页面展示 sheet_name / row_number。
 4. 未覆盖问题“公司年终奖发放规则是什么？”返回 low_confidence 时，页面能够展示 0 chunks。
-5. 该前端主要用于展示 RAG 可解释性字段与演示检索链路，不是生产级 UI。
+5. 页面可以切换到 Agent Demo 模式，调用 POST /agent_demo。
+6. Agent Demo 模式提供 allow_rebuild_index checkbox，默认关闭。
+7. Agent Demo 模式可以展示 answer、agent_steps、agent_debug。
+8. 该前端主要用于展示 RAG 可解释性字段与 Agent 工具调用链路，不是生产级 UI。
 ```
 ---
 
@@ -575,4 +594,73 @@ txt 通常作为线性文本读取；PDF 按 page 生成 Document，并在 metad
 
 ```text
 这是完整长期记忆系统或跨 session 用户记忆系统。
+```
+
+---
+
+## 13. Controlled Tool Calling Agent Demo 测试记录
+
+> 测试状态：真实接口测试已通过。  
+> 能力边界：这是旁路 `/agent_demo`，不是完整自主 Agent，也不是 Multi-Agent。
+
+### 13.1 已验证能力
+
+本阶段通过 `POST /agent_demo` 和 `scripts/test_agent_demo.py` 验证：
+
+1. `/agent_demo` 不替代 `/ask_langchain`，主 RAG 链路保持独立。
+2. 支持 `AGENT_PLANNER_PROVIDER=fake / llm`。
+3. LLM planner 根据 question + tool schemas 生成 strict JSON `tool_call`。
+4. LLM 输出 JSON 解析失败时返回 structured error，不执行任何工具。
+5. 后端统一执行 tool whitelist validation。
+6. 后端统一执行 arguments schema validation。
+7. `rebuild_index` 必须同时满足 `tool_call.arguments.confirm == true` 和 `request.allow_rebuild_index == true`。
+8. 即使 planner 生成 `confirm=true`，只要 request 未授权，也会 blocked。
+9. `agent_steps` 可以观察 planner、白名单校验、参数校验、危险工具授权和 executor 执行结果。
+
+### 13.2 工具验证结果
+
+| tool | 当前结果 | 关键边界 |
+|---|---|---|
+| `get_index_info` | 已验证 | 只读检查索引状态 |
+| `search_knowledge_base` | 已验证 | 只读 RAG tool，复用 `get_embedding`、`hybrid_search`、reranker、`run_rag_chain` |
+| `rebuild_index` | 已验证 blocked / safety path | 已有双层校验，但当前不真实重建，授权通过后返回 `not_implemented_for_safety` |
+
+### 13.3 回归测试结果
+
+| case_id | 测试目标 | 测试方式 | 结果 | 关键证据 |
+|---|---|---|---|---|
+| A001 | 查询索引状态 | `帮我检查知识库状态` | 通过 | tool_call 为 `get_index_info` |
+| A002 | 查询知识库问题 | `事假怎么申请？` | 通过 | tool_call 为 `search_knowledge_base`，返回 answer / retriever_status / reference_preview |
+| A003 | 未授权重建 blocked | `allow_rebuild_index=false` | 通过 | dangerous authorization blocked |
+| A004 | 授权后仍安全占位 | `allow_rebuild_index=true` | 通过 | `not_implemented_for_safety`、`rebuild_executed=false` |
+| A005 | confirm=true 但 request 未授权 | fake / llm planner | 通过 | 后端仍 blocked |
+| A006 | 未知工具拒绝 | validator 测试 | 通过 | `unknown_tool` |
+| A007 | 参数错误拒绝 | validator 测试 | 通过 | `invalid_argument_type` |
+| A008 | JSON 解析失败不执行工具 | strict parser 测试 | 通过 | `planner_parse_error` |
+| A009 | `/ask_langchain` 不受影响 | route / 编译 / 回归检查 | 通过 | 旧接口仍存在 |
+
+### 13.4 当前未实现
+
+当前没有实现：
+
+- 完整自主 Agent。
+- Multi-Agent。
+- 外部 API 工具，例如飞书、微博、小红书、天气 API。
+- 在 `/agent_demo` 中真实执行 `rebuild_index`。
+- 动态 user_id / role / permission 工具表。
+- 生产级权限系统。
+- Agent 完整复刻 `/ask_langchain` 的多轮 memory、Query Rewrite、semantic router 和数据库写入能力。
+
+### 13.5 面试表达建议
+
+可以说：
+
+```text
+我实现了一个旁路的最小版 Controlled Tool Calling Agent Demo。LLM planner 只负责根据用户问题和 tool schemas 生成 strict JSON tool_call；后端负责工具白名单、参数 schema、危险工具授权和 executor 执行。RAG 被封装成 search_knowledge_base 只读工具，复用现有检索与回答能力，但不替代 /ask_langchain。
+```
+
+不要说：
+
+```text
+这是完整自主 Agent / Multi-Agent / 生产级权限系统，或者已经能通过 Agent 真实重建索引、调用飞书/微博/天气等外部 API。
 ```
