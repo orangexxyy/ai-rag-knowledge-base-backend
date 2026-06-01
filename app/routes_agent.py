@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Request
 
+from app.agent_planner import plan_tool_call
 from app.agent_tools import (
     TOOL_REGISTRY,
-    fake_plan_tool_call,
     validate_dangerous_tool_authorization,
     validate_tool_arguments,
     validate_tool_name,
@@ -23,26 +23,44 @@ def _make_step(step: int, stage: str, status: str, **kwargs):
 @router_agent.post("/agent_demo")
 def agent_demo(request_data: AgentDemoRequest, request: Request):
     """
-    第一阶段 controlled tool calling agent demo。
+    Controlled tool calling agent demo.
 
-    当前使用临时 fake planner 生成结构化 tool_call，重点验证后端白名单、
-    参数 schema、危险工具双层授权和 executor 调用链路。
+    第二阶段支持 fake / llm planner，但无论 planner 来源是什么，
+    后续都必须经过白名单、参数 schema、危险工具授权和 executor 链路。
     """
     question = request_data.question
     allow_rebuild_index = request_data.allow_rebuild_index
     agent_steps = []
 
-    tool_call = fake_plan_tool_call(question)
+    planner_result = plan_tool_call(question)
     agent_steps.append(
         _make_step(
             step=1,
             stage="planner",
-            status="planned",
-            planner_type="fake_rule_based_first_stage",
-            tool_call=tool_call,
+            status="planned" if planner_result["success"] else "failed",
+            planner_type=planner_result["provider"],
+            tool_call=planner_result["tool_call"],
+            raw_output=planner_result["raw_output"],
+            error=planner_result["error"],
         )
     )
+    if not planner_result["success"]:
+        return success_response(
+            message="/agent_demo planner failed",
+            data={
+                "answer": "planner 未能生成合法的 strict JSON tool_call，未执行任何工具。",
+                "agent_mode": f"controlled_tool_calling_{planner_result['provider']}_planner",
+                "agent_steps": agent_steps,
+                "agent_debug": _build_agent_debug(
+                    allow_rebuild_index=allow_rebuild_index,
+                    blocked=True,
+                    planner_provider=planner_result["provider"],
+                    planner_error=planner_result["error"],
+                ),
+            },
+        )
 
+    tool_call = planner_result["tool_call"]
     name_validation = validate_tool_name(tool_call)
     agent_steps.append(
         _make_step(
@@ -57,9 +75,13 @@ def agent_demo(request_data: AgentDemoRequest, request: Request):
             message="/agent_demo tool call blocked by whitelist",
             data={
                 "answer": "工具名不在后端白名单中，未执行任何工具。",
-                "agent_mode": "controlled_tool_calling_fake_planner",
+                "agent_mode": f"controlled_tool_calling_{planner_result['provider']}_planner",
                 "agent_steps": agent_steps,
-                "agent_debug": _build_agent_debug(allow_rebuild_index, blocked=True),
+                "agent_debug": _build_agent_debug(
+                    allow_rebuild_index=allow_rebuild_index,
+                    blocked=True,
+                    planner_provider=planner_result["provider"],
+                ),
             },
         )
 
@@ -79,13 +101,17 @@ def agent_demo(request_data: AgentDemoRequest, request: Request):
             message="/agent_demo tool call blocked by argument validation",
             data={
                 "answer": "工具参数不符合 schema，未执行任何工具。",
-                "agent_mode": "controlled_tool_calling_fake_planner",
+                "agent_mode": f"controlled_tool_calling_{planner_result['provider']}_planner",
                 "agent_steps": agent_steps,
-                "agent_debug": _build_agent_debug(allow_rebuild_index, blocked=True),
+                "agent_debug": _build_agent_debug(
+                    allow_rebuild_index=allow_rebuild_index,
+                    blocked=True,
+                    planner_provider=planner_result["provider"],
+                ),
             },
         )
 
-    # 危险工具必须经过模型语义确认和后端 request-level 授权两层校验。
+    # 危险工具仍然必须经过模型语义确认 + 后端 request-level 授权双层校验。
     authorization = validate_dangerous_tool_authorization(
         tool_name=tool_name,
         arguments=argument_validation["arguments"],
@@ -104,15 +130,22 @@ def agent_demo(request_data: AgentDemoRequest, request: Request):
             message="/agent_demo dangerous tool blocked",
             data={
                 "answer": "检测到危险工具调用请求，但后端授权未通过，未执行重建索引。",
-                "agent_mode": "controlled_tool_calling_fake_planner",
+                "agent_mode": f"controlled_tool_calling_{planner_result['provider']}_planner",
                 "agent_steps": agent_steps,
-                "agent_debug": _build_agent_debug(allow_rebuild_index, blocked=True),
+                "agent_debug": _build_agent_debug(
+                    allow_rebuild_index=allow_rebuild_index,
+                    blocked=True,
+                    planner_provider=planner_result["provider"],
+                ),
             },
         )
 
     tool = TOOL_REGISTRY[tool_name]
     try:
-        execution_result = tool.executor(argument_validation["arguments"], request.app.state)
+        execution_result = tool.executor(
+            argument_validation["arguments"],
+            request.app.state,
+        )
         execution_status = execution_result.get("status", "success")
     except Exception as exc:
         execution_result = {
@@ -136,11 +169,12 @@ def agent_demo(request_data: AgentDemoRequest, request: Request):
         message="/agent_demo executed",
         data={
             "answer": _build_answer(tool_name, execution_result),
-            "agent_mode": "controlled_tool_calling_fake_planner",
+            "agent_mode": f"controlled_tool_calling_{planner_result['provider']}_planner",
             "agent_steps": agent_steps,
             "agent_debug": _build_agent_debug(
                 allow_rebuild_index=allow_rebuild_index,
                 blocked=False,
+                planner_provider=planner_result["provider"],
                 tool_name=tool_name,
                 execution_status=execution_status,
             ),
@@ -151,13 +185,16 @@ def agent_demo(request_data: AgentDemoRequest, request: Request):
 def _build_agent_debug(
     allow_rebuild_index: bool,
     blocked: bool,
+    planner_provider: str = "fake",
     tool_name: str | None = None,
     execution_status: str | None = None,
+    planner_error: dict | None = None,
 ) -> dict:
     return {
         "agent_type": "controlled_tool_calling_agent_demo",
-        "planner": "fake_rule_based_first_stage",
-        "planner_note": "Temporary planner for phase-one backend execution validation; replace with LLM strict JSON planner later.",
+        "planner": planner_provider,
+        "planner_note": "fake is kept as fallback; llm provider requires strict JSON tool_call output.",
+        "planner_error": planner_error,
         "executor_policy": "backend_whitelist_schema_validation_and_dangerous_tool_authorization",
         "available_tools": list(TOOL_REGISTRY.keys()),
         "allow_rebuild_index": allow_rebuild_index,

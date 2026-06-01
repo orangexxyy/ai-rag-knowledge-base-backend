@@ -13,6 +13,7 @@ from app.agent_tools import (
     validate_tool_arguments,
     validate_tool_name,
 )
+from app.agent_planner import parse_strict_tool_call, plan_tool_call
 import app.main  # noqa: F401
 
 
@@ -60,6 +61,42 @@ def test_invalid_arguments_rejected():
     assert result["error_code"] == "invalid_argument_type"
 
 
+def test_fake_planner_provider_still_available():
+    result = plan_tool_call("index status", provider="fake")
+    assert result["success"] is True
+    assert result["provider"] == "fake"
+    assert result["tool_call"]["tool_name"] == "get_index_info"
+
+
+def test_strict_json_tool_call_parse_success():
+    result = parse_strict_tool_call(
+        '{"tool_name": "get_index_info", "arguments": {}}'
+    )
+    assert result == {"tool_name": "get_index_info", "arguments": {}}
+
+
+def test_strict_json_rejects_natural_language_prefix():
+    try:
+        parse_strict_tool_call(
+            'I will call a tool.\n{"tool_name": "get_index_info", "arguments": {}}'
+        )
+    except ValueError as exc:
+        assert "valid JSON" in str(exc)
+    else:
+        raise AssertionError("natural language mixed with JSON should be rejected")
+
+
+def test_strict_json_rejects_extra_keys():
+    try:
+        parse_strict_tool_call(
+            '{"tool_name": "get_index_info", "arguments": {}, "reason": "check"}'
+        )
+    except ValueError as exc:
+        assert "only" in str(exc)
+    else:
+        raise AssertionError("extra planner keys should be rejected")
+
+
 if __name__ == "__main__":
     # 这些测试只验证 agent demo 的安全边界，不启动 FastAPI，也不执行真实重建。
     test_get_index_info_read_only()
@@ -67,4 +104,8 @@ if __name__ == "__main__":
     test_rebuild_authorized_but_executor_still_guarded_in_phase_one()
     test_unknown_tool_rejected()
     test_invalid_arguments_rejected()
-    print("agent_demo phase-one tests passed")
+    test_fake_planner_provider_still_available()
+    test_strict_json_tool_call_parse_success()
+    test_strict_json_rejects_natural_language_prefix()
+    test_strict_json_rejects_extra_keys()
+    print("agent_demo phase-two tests passed")

@@ -208,6 +208,14 @@ AUTO_REBUILD_INDEX_ON_STARTUP = True
 # 默认 deepseek，保证原项目稳定
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").lower()
 
+# =========================
+# Agent Demo Planner 配置
+# =========================
+
+# /agent_demo 第二阶段支持 fake / llm 两种 planner。
+# 默认 fake，避免未配置模型 API Key 时影响第一阶段已跑通的后端安全链路。
+AGENT_PLANNER_PROVIDER = os.getenv("AGENT_PLANNER_PROVIDER", "fake").lower()
+
 # DeepSeek 最终回答模型温度
 DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.2"))
 

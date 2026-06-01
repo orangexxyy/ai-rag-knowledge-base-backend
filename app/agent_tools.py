@@ -141,6 +141,19 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 }
 
 
+def get_tool_schemas() -> list[dict[str, Any]]:
+    """提供给 planner 的工具 schema，不暴露后端 executor。"""
+    return [
+        {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters_schema": tool.parameters_schema,
+            "risk_level": tool.risk_level,
+        }
+        for tool in TOOL_REGISTRY.values()
+    ]
+
+
 def fake_plan_tool_call(question: str) -> dict[str, Any]:
     """
     第一阶段临时 planner：只用于验证后端 tool_call 执行链路。
