@@ -655,9 +655,80 @@ answer_llm_is_local
 
 ---
 
-## 14. 启动与测试
+## 14. Agent / Tool Calling Demo
 
-### 14.1 安装依赖
+`/agent_demo` 是旁路接口，不替代 `/ask_langchain`，也不修改现有 RAG 主链路。当前实现的是最小版 Controlled Tool Calling Agent Demo，用于展示“模型生成工具调用计划，后端负责校验和执行”的受控流程；它不是完整自主 Agent，也不是 Multi-Agent。
+
+Planner 支持两种模式：
+
+```text
+AGENT_PLANNER_PROVIDER=fake
+AGENT_PLANNER_PROVIDER=llm
+```
+
+LLM planner 会根据 `question + tool schemas` 生成 strict JSON `tool_call`，结构只包含工具名和参数，例如：
+
+```json
+{
+  "tool_name": "get_index_info",
+  "arguments": {}
+}
+```
+
+无论 planner 是 `fake` 还是 `llm`，后端都会统一执行：
+
+```text
+tool whitelist validation
+arguments schema validation
+dangerous tool authorization
+executor execution
+```
+
+当前工具：
+
+```text
+get_index_info
+search_knowledge_base
+rebuild_index
+```
+
+- `get_index_info`：只读工具，用于查看当前知识库索引状态。
+- `search_knowledge_base`：只读 RAG tool，复用现有 `get_embedding`、`hybrid_search`、reranker、`run_rag_chain`，从 `app.state` 读取已加载索引对象；它不复制完整 `/ask_langchain`，不包含 session history、Query Rewrite、semantic router、memory_summary 或数据库写入。
+- `rebuild_index`：危险工具，已实现双层校验：
+
+```text
+tool_call.arguments.confirm == true
+AND
+request.allow_rebuild_index == true
+```
+
+当前即使双层校验通过，也不会真实重建索引，而是返回 `not_implemented_for_safety`。
+
+前端 Agent Demo 模式会展示：
+
+```text
+answer
+agent_mode
+agent_steps
+agent_debug
+```
+
+当前未实现，也不应夸大为：
+
+```text
+完整自主 Agent
+Multi-Agent
+外部 API 工具
+动态 user_id / role / permission 工具表
+生产级权限系统
+Agent 中真实执行 rebuild_index
+```
+
+---
+
+## 15. 启动与测试
+
+### 15.1 安装依赖
 
 ```powershell
 pip install -r requirements.txt
@@ -670,7 +741,7 @@ pypdf
 openpyxl
 ```
 
-### 14.2 配置 `.env`
+### 15.2 配置 `.env`
 
 ```env
 DEEPSEEK_API_KEY=your_deepseek_api_key
@@ -683,7 +754,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3-4b-instruct-local
 ```
 
-### 14.3 准备资料目录
+### 15.3 准备资料目录
 
 ```text
 data/raw_docs/
@@ -693,7 +764,7 @@ data/raw_docs/
 ├─ permission_matrix_sample.xlsx
 ```
 
-### 14.4 重建索引
+### 15.4 重建索引
 
 ```powershell
 python -c "from app.index_manager import build_and_save_chunk_index; build_and_save_chunk_index()"
@@ -705,7 +776,7 @@ python -c "from app.index_manager import build_and_save_chunk_index; build_and_s
 POST /rebuild_index
 ```
 
-### 14.5 启动服务
+### 15.5 启动服务
 
 ```powershell
 uvicorn app.main:app --reload
@@ -717,7 +788,7 @@ uvicorn app.main:app --reload
 http://127.0.0.1:8000/docs
 ```
 
-### 14.6 前端 Demo
+### 15.6 前端 Demo
 
 `frontend/` 是基于 React + Vite + TypeScript 的轻量展示页面，支持两种模式：
 
@@ -772,7 +843,7 @@ http://127.0.0.1:5173
 
 ---
 
-## 15. 推荐测试问题
+## 16. 推荐测试问题
 
 ```json
 {
@@ -820,7 +891,7 @@ used_chunks_debug 可以解释命中来源
 
 ---
 
-## 16. 当前已实现范围
+## 17. 当前已实现范围
 
 已实现：
 
@@ -860,7 +931,7 @@ used_chunks_debug 可以解释命中来源
 
 ---
 
-## 17. 当前限制
+## 18. 当前限制
 
 当前仍是求职展示型项目，不是生产级企业知识库系统。
 
@@ -888,7 +959,7 @@ used_chunks_debug 可以解释命中来源
 
 ---
 
-## 18. 项目亮点
+## 19. 项目亮点
 
 ```text
 1. 从单文件 knowledge.txt Demo 升级为资料目录入库
@@ -907,7 +978,7 @@ used_chunks_debug 可以解释命中来源
 
 ---
 
-## 19. 面试表达
+## 20. 面试表达
 
 ```text
 我把原来的单文件 RAG Demo 升级成了资料目录入库模式。系统会扫描 data/raw_docs 目录，对 txt、文本型 PDF 和 Excel 分别调用对应 Loader。
@@ -925,7 +996,7 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 
 ---
 
-## 20. 一句话总结
+## 21. 一句话总结
 
 ```text
 这是一个基于 FastAPI 的企业知识库 RAG 后端项目，已实现资料目录入库、txt + 文本型 PDF + Excel 解析、统一 Document 数据结构、metadata 贯穿建库与检索、结构化 chunk 策略、FAISS + BM25 + RRF 混合检索、DashScope Reranker、low_confidence 保护、SQLite 多轮会话、最小版 session summary memory、旁路 `/agent_demo` Controlled Tool Calling Agent Demo 和 DeepSeek / Ollama 最终回答模型切换，可用于展示 AI 应用开发中的 RAG 工程实践与最小版工具调用能力。
@@ -933,7 +1004,7 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 
 ---
 
-## 21. 最小版 session summary memory
+## 22. 最小版 session summary memory
 
 当前项目已在 `/ask_langchain` 主链路中集成一个**最小版 session summary memory**。它的定位是：在同一个 `session_id` 内，对较早的会话历史做压缩摘要，辅助后续 Query Rewrite 理解多轮追问上下文。
 
@@ -982,7 +1053,7 @@ txt 通常生成一个 Document；PDF 会按 page 生成多个 Document，并在
 
 ---
 
-## 22. 最小版 Controlled Tool Calling Agent Demo
+## 23. 最小版 Controlled Tool Calling Agent Demo
 
 当前项目已实现旁路接口 `POST /agent_demo`，用于展示 controlled tool calling。它不替代 `/ask_langchain`，也不修改 RAG 主链路。
 
