@@ -16,6 +16,7 @@ from app.semantic_router import build_intent_router
 from app.chat_history_store import init_chat_db
 from app.routes_langchain import router_langchain
 from app.routes import router
+from app.routes_agent import router_agent
 from app.bm25_retriever import build_bm25_index
 
 
@@ -100,3 +101,4 @@ app.add_middleware(
 
 app.include_router(router=router)
 app.include_router(router=router_langchain)
+app.include_router(router=router_agent)
