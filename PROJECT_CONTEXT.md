@@ -895,32 +895,54 @@ metadata.row_number = None
 
 ---
 
-### 2.3 文本型 PDF Loader
+### 2.3 PDF Loader（文本型 PDF + 最小表格/OCR 闭环）
 
-已实现：
-
-```text
-使用 pypdf.PdfReader 读取文本型 PDF
-PDF 每一页生成一个 Document
-metadata.file_type = pdf
-metadata.page 从 1 开始
-```
-
-设计原因：
+当前已实现：
 
 ```text
-PDF 命中后需要追溯到具体页码。
-如果整份 PDF 合成一个 Document，后续只能知道来源文件，无法知道第几页。
+1. 使用 pypdf.PdfReader 读取文本型 PDF
+2. PDF 每一页继续生成 content_type=text 的 Document
+3. metadata.file_type = pdf
+4. metadata.page 从 1 开始
+5. 使用 pdfplumber 提取文本型 PDF 中可解析表格
+6. 表格按 header + row 转成自然语言 Document
+7. OCR_PROVIDER 默认 none，不执行 OCR
+8. OCR 启用时，可将疑似扫描页渲染成图片并识别文字生成 Document
+9. OCR 未启用时，疑似扫描页 / 主要图片页生成 image_placeholder Document
 ```
 
-当前限制：
+文本型 PDF 原有能力保持不变：命中后仍能通过 `page` 追溯到具体页码。
+
+PDF 表格 Document 示例：
 
 ```text
-扫描型 PDF OCR 未实现
-复杂 PDF 表格结构还原未实现
-多栏版面恢复未实现
+PDF表格记录：第2页 表格1 第3行：字段A=...；字段B=...；字段C=...
 ```
 
+新增 metadata 字段示例：
+
+```text
+content_type = text / table / ocr_text / image_placeholder
+extraction_method = pypdf_text / pdfplumber_table / paddleocr_page_image / easyocr_page_image / pypdf_image_detection
+table_index
+row_index / row_number
+ocr_provider
+ocr_status
+ocr_confidence
+image_index
+image_count
+image_area_ratio
+```
+
+当前边界：
+
+```text
+OCR 默认关闭：OCR_PROVIDER=none
+paddleocr / easyocr 不进入 requirements，只在启用时动态 import
+OCR 只识别图片中的文字，不理解图片语义、图表含义、流程图结构或照片内容
+当前未做生产级表格区域去重，page text Document 和 table Document 可以存在少量重复
+复杂表格还原、扫描页质量判断、多栏布局恢复仍不是生产级实现
+```
 ---
 
 ### 2.4 Excel Loader
@@ -1293,10 +1315,19 @@ data/raw_docs/
 ---
 
 ## 9. 当前仍未实现
+PDF 当前能力边界（最新）：
+
+```text
+已支持文本型 PDF page text Document
+已支持最小版 PDF 表格提取为结构化文本 Document
+已支持最小 OCR 闭环：按 OCR_PROVIDER 可选启用，默认 none
+OCR 只识别图片文字，不等于图片语义理解
+扫描型 PDF、复杂表格还原、多栏布局恢复仍不是生产级实现
+```
 
 ```text
 Word / docx Loader
-扫描型 PDF OCR
+扫描型 PDF 生产级质量评估与批量 OCR
 复杂 PDF 表格结构还原
 PDF 页眉页脚智能过滤
 多栏 PDF 版面恢复
@@ -1395,3 +1426,4 @@ Agent Demo 模式会发送 `question`、`session_id` 和 `allow_rebuild_index`�
 为了让 Vite 开发页面能够从浏览器访问 FastAPI 接口，CORS 修改仅在
 `app/main.py` 中完成，允许 `http://127.0.0.1:5173` 和
 `http://localhost:5173` 调用后端。该调整不改变 RAG 检索、路由、切分或回答逻辑。
+

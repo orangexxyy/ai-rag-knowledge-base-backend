@@ -191,40 +191,61 @@ metadata.row_number = None
 
 ### 6.2 PDF Loader
 
-PDF 使用 `pypdf.PdfReader` 读取文本型 PDF。
+PDF 当前采用最小增强版 Loader：
 
-特点：
+```text
+1. 使用 pypdf.PdfReader 保留文本型 PDF 的 page text Document
+2. 使用 pdfplumber 提取文本型 PDF 中可解析的表格
+3. 将 PDF 表格按 header + row 转成自然语言 Document
+4. OCR_PROVIDER 默认 none，不执行 OCR
+5. 当页面文本很少且疑似扫描页 / 主要图片页时，生成 OCR 文本或 image_placeholder
+```
+
+文本型 PDF 的原能力保持不变：
 
 ```text
 文本型 PDF 按 page 提取文本
-每一页生成一个 Document
+每一页生成一个 content_type=text 的 Document
 metadata.file_type = pdf
 metadata.page = 页码，从 1 开始
+metadata.extraction_method = pypdf_text
 ```
 
-设计原因：
+PDF 表格不会简单拼成一大段无结构文本，而是按行转换：
 
 ```text
-PDF 命中后需要知道来源页码。
-如果整份 PDF 合成一个 Document，后续只能知道来自哪个 PDF，无法知道第几页。
+PDF表格记录：第2页 表格1 第3行：字段A=...；字段B=...；字段C=...
 ```
 
-当前支持：
+表格 Document metadata 关键字段：
 
 ```text
-文本型 PDF
-page 级 metadata
+content_type = table
+table_index
+row_index / row_number
+extraction_method = pdfplumber_table
 ```
 
-当前不支持：
+OCR 是最小闭环，不是完整多模态图片理解：
 
 ```text
-扫描型 PDF OCR
-复杂 PDF 表格结构还原
-多栏版面恢复
-页眉页脚智能过滤
+OCR_PROVIDER=none      # 默认关闭
+OCR_PROVIDER=paddleocr # 可选，运行时动态 import
+OCR_PROVIDER=easyocr   # 可选，运行时动态 import
 ```
 
+默认关闭时，系统不会 import paddleocr / easyocr。只有疑似扫描页 / 主要图片页才会生成 `image_placeholder`，避免普通页面 logo、图标、装饰图片污染索引。
+
+当前边界：
+
+```text
+已支持文本型 PDF
+已支持最小版 PDF 表格提取为结构化文本 Document
+已支持最小 OCR 闭环：扫描页可通过可选 OCR Provider 转成 Document
+OCR 只识别图片中的文字，不理解图片语义、图表含义、流程图结构或照片内容
+当前未做生产级表格区域去重，page text Document 和 table Document 可能存在少量重复
+复杂表格还原、多栏布局恢复、扫描页质量判断仍不是生产级实现
+```
 ### 6.3 Excel Loader
 
 Excel 使用 `openpyxl` 读取 `.xlsx` 文件。
@@ -931,18 +952,7 @@ used_chunks_debug 可以解释命中来源
 
 ---
 
-## 18. 当前限制
-
-当前仍是求职展示型项目，不是生产级企业知识库系统。
-
-当前限制：
-
-```text
-1. PDF 仅支持文本型 PDF
-2. 扫描型 PDF OCR 尚未实现
-3. 复杂 PDF 表格结构还原尚未实现
-4. 多栏 PDF 版面恢复尚未实现
-5. Excel 当前只支持普通单行 header + 数据行
+ Excel 当前只支持普通单行 header + 数据行
 6. Excel 合并单元格、多级表头、公式重新计算、透视表尚未支持
 7. Word / docx Loader 尚未实现
 8. 权限过滤目前只保留 permission_level 字段，尚未真正按用户权限过滤
@@ -1100,3 +1110,5 @@ request.allow_rebuild_index == true
 ```text
 项目实现了一个最小版 Controlled Tool Calling Agent Demo：LLM planner 只生成 strict JSON tool_call，后端负责工具白名单、参数 schema、危险工具授权和 executor 执行；RAG 被封装成一个只读工具，主接口 /ask_langchain 不受影响。
 ```
+
+

@@ -153,6 +153,21 @@ MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("MEMORY_SUMMARY_MAX_CHARS", "800"))
 # 控制 session summary 摘要生成模型，独立于最终回答的 LLM_PROVIDER。
 MEMORY_SUMMARY_PROVIDER = os.getenv("MEMORY_SUMMARY_PROVIDER", "deepseek").lower()
 
+# =========================
+# PDF OCR Config
+# =========================
+
+# OCR_PROVIDER 默认关闭，避免未安装 OCR 引擎时影响项目启动。
+# 可选值：
+# - none：不执行 OCR，只在疑似扫描页生成谨慎的 image_placeholder
+# - paddleocr：运行时动态 import paddleocr
+# - easyocr：运行时动态 import easyocr
+OCR_PROVIDER = os.getenv("OCR_PROVIDER", "none").lower()
+
+# 扫描页最小启发式：普通文本很少，且页面主要由图片构成时，才进入 OCR / 占位逻辑。
+PDF_OCR_MIN_TEXT_CHARS = int(os.getenv("PDF_OCR_MIN_TEXT_CHARS", "40"))
+PDF_SCAN_IMAGE_AREA_RATIO = float(os.getenv("PDF_SCAN_IMAGE_AREA_RATIO", "0.60"))
+
 
 
 
@@ -234,8 +249,8 @@ OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15"))
 
 # 文档入库处理流程版本
 # 当 document_loader / document_processor / document_chunker 的逻辑变化时，手动加 1
-DOCUMENT_PIPELINE_VERSION = "v6"
+DOCUMENT_PIPELINE_VERSION = "v7"
 
 # metadata 结构版本
 # 当 metadata 字段设计变化时，手动加 1
-METADATA_SCHEMA_VERSION = "v1"
+METADATA_SCHEMA_VERSION = "v2"

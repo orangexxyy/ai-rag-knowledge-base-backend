@@ -13,3 +13,5 @@ langchain-ollama
 pydantic
 python-dotenv
 openpyxl
+pdfplumber
+PyMuPDF
