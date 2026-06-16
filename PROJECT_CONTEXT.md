@@ -943,6 +943,16 @@ OCR 只识别图片中的文字，不理解图片语义、图表含义、流程�
 当前未做生产级表格区域去重，page text Document 和 table Document 可以存在少量重复
 复杂表格还原、扫描页质量判断、多栏布局恢复仍不是生产级实现
 ```
+
+图片表格抽取质量门控：
+
+```text
+OCR / VLM 提取图片表格后不能无条件作为可靠知识入库。
+当前项目增加了最小 extraction quality control：低可信图片表格会生成 content_type=image_table_review_required 的人工复核 Document。
+这不是 RAG 检索阶段的 low_confidence，而是入库阶段的质量控制。
+判断依据包括 OCR confidence、表头完整性、行列一致性、空单元格比例、关键字段缺失。
+当前实现是最小质量门控，不是生产级 OCR 质检系统。
+```
 ---
 
 ### 2.4 Excel Loader

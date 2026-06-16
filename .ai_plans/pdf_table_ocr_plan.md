@@ -32,6 +32,7 @@
 6. 启用 `OCR_PROVIDER=paddleocr/easyocr` 时才动态 import 对应 OCR 引擎，并通过 PyMuPDF 渲染页面图片后生成 `ocr_text` Document。
 7. 新增测试脚本覆盖文本 PDF、表格转换函数、默认 OCR 关闭、占位/OCR metadata。
 8. 更新 README 和 PROJECT_CONTEXT，明确已实现能力和未实现边界。
+9. 增加图片表格抽取最小质量门控：低可信结果生成 `image_table_review_required`，避免作为可靠事实入库。
 
 ## Progress Checklist
 
@@ -41,15 +42,18 @@
 - [x] Test script added
 - [x] Documentation updated
 - [x] Validation run
+- [x] Image table extraction quality gate added
 
 ## Test Checklist
 
 - [x] `.\.venv\Scripts\python.exe -m py_compile app\main.py app\document_loader.py app\config.py`
 - [x] `.\.venv\Scripts\python.exe scripts\test_pdf_table_ocr_loader.py`
+- [x] `.\.venv\Scripts\python.exe scripts\test_pdf_image_table_quality.py`
 
 ## Risks and Rollback Notes
 
 - `pdfplumber` 和 `PyMuPDF` 是新增轻量依赖，未安装时可通过 requirements 安装。
 - OCR 引擎保持可选，不进入 requirements，避免默认启动失败。
 - 新增 metadata 字段向后兼容，旧 Document 不要求包含 `content_type`。
+- 图片表格质量门控是入库阶段 extraction quality control，不替代 RAG 检索阶段 low_confidence。
 - 如需回滚，移除 loader 增强函数、OCR 配置、测试脚本和文档段落即可，不涉及数据库 schema。

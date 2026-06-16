@@ -429,6 +429,206 @@ def build_pdf_image_placeholder_document(
     )
 
 
+def evaluate_table_extraction_quality(
+    table_rows: list[list[str]],
+    ocr_confidence: float | None = None,
+    required_headers: list[str] | None = None,
+) -> dict:
+    """
+    评估图片表格 / OCR 表格抽取结果是否适合作为可靠知识入库。
+
+    这是入库阶段 extraction quality control，不是 RAG 检索阶段的 low_confidence。
+    当前仅做最小质量门控，用于决定是否需要人工复核。
+    """
+
+    reasons = []
+    score = 1.0
+    required_headers = required_headers or []
+
+    if ocr_confidence is not None and ocr_confidence < 0.6:
+        reasons.append(f"OCR 平均置信度较低：{ocr_confidence:.2f}")
+        score -= 0.25
+
+    if not table_rows:
+        reasons.append("未识别到表格行")
+        return {
+            "status": "needs_human_review",
+            "score": 0.0,
+            "reasons": reasons,
+            "table_structure_score": 0.0,
+        }
+
+    normalized_rows = [
+        [normalize_pdf_table_cell(cell) for cell in row]
+        for row in table_rows
+    ]
+    headers = normalized_rows[0] if normalized_rows else []
+    non_empty_headers = [header for header in headers if header]
+
+    if not non_empty_headers:
+        reasons.append("表头缺失")
+        score -= 0.25
+
+    row_lengths = [len(row) for row in normalized_rows if row]
+    expected_columns = max(row_lengths, key=row_lengths.count) if row_lengths else 0
+    inconsistent_rows = [
+        index + 1
+        for index, row in enumerate(normalized_rows)
+        if len(row) != expected_columns
+    ]
+
+    if expected_columns <= 1:
+        reasons.append("表格列数过少，结构不稳定")
+        score -= 0.2
+    elif inconsistent_rows:
+        reasons.append(f"行列数不一致：第 {inconsistent_rows} 行")
+        score -= 0.2
+
+    total_cells = sum(len(row) for row in normalized_rows)
+    empty_cells = sum(1 for row in normalized_rows for cell in row if not cell)
+    empty_ratio = empty_cells / total_cells if total_cells else 1.0
+
+    if empty_ratio > 0.4:
+        reasons.append(f"空单元格比例过高：{empty_ratio:.2f}")
+        score -= 0.2
+
+    missing_required_headers = [
+        header for header in required_headers if header not in non_empty_headers
+    ]
+
+    if missing_required_headers:
+        reasons.append(
+            "关键字段缺失：" + "、".join(missing_required_headers)
+        )
+        score -= 0.25
+
+    score = max(0.0, min(1.0, score))
+    table_structure_score = max(
+        0.0,
+        min(1.0, 1.0 - min(empty_ratio, 1.0) - (0.2 if inconsistent_rows else 0.0)),
+    )
+    status = "high_confidence" if score >= 0.7 and not reasons else "needs_human_review"
+
+    return {
+        "status": status,
+        "score": round(score, 4),
+        "reasons": reasons,
+        "table_structure_score": round(table_structure_score, 4),
+    }
+
+
+def build_pdf_image_table_review_required_document(
+    file_path: str,
+    page_number: int,
+    quality_result: dict,
+    ocr_confidence: float | None = None,
+    extraction_method: str = "image_table_quality_gate",
+) -> Document:
+    """
+    构造图片表格待人工复核 Document。
+
+    低可信图片表格不会作为可靠 table Document 入库，只保留复核提示和原因。
+    """
+
+    reasons = quality_result.get("reasons", [])
+    review_reason = "；".join(reasons) if reasons else "抽取质量不足，需要人工复核"
+
+    metadata = _build_pdf_base_metadata(
+        file_path=file_path,
+        page_number=page_number,
+    )
+    metadata.update(
+        {
+            "content_type": "image_table_review_required",
+            "human_review_required": True,
+            "review_reason": review_reason,
+            "extraction_quality_score": quality_result.get("score"),
+            "ocr_confidence": ocr_confidence,
+            "table_structure_score": quality_result.get("table_structure_score"),
+            "extraction_method": extraction_method,
+        }
+    )
+
+    return Document(
+        text=(
+            f"PDF图片表格待人工复核：第{page_number}页检测到图片表格，"
+            "但 OCR / 表格结构识别可信度较低，未作为可靠知识入库。"
+            f"原因：{review_reason}"
+        ),
+        metadata=metadata,
+    )
+
+
+def build_pdf_image_table_documents_with_quality_gate(
+    file_path: str,
+    page_number: int,
+    table_rows: list[list[str]],
+    ocr_confidence: float | None = None,
+    required_headers: list[str] | None = None,
+    extraction_method: str = "image_table_ocr",
+) -> list[Document]:
+    """
+    将图片表格抽取结果通过质量门控转换成 Document。
+
+    当前项目尚未接入真实图片表格识别/VLM；该函数用于沉淀最小质量门控：
+    - 高可信结果才可生成 content_type=table
+    - 低可信结果只生成 image_table_review_required，避免污染可靠事实库
+    """
+
+    quality_result = evaluate_table_extraction_quality(
+        table_rows=table_rows,
+        ocr_confidence=ocr_confidence,
+        required_headers=required_headers,
+    )
+
+    if quality_result["status"] == "needs_human_review":
+        return [
+            build_pdf_image_table_review_required_document(
+                file_path=file_path,
+                page_number=page_number,
+                quality_result=quality_result,
+                ocr_confidence=ocr_confidence,
+                extraction_method=extraction_method,
+            )
+        ]
+
+    headers = [normalize_pdf_table_cell(cell) for cell in table_rows[0]]
+    documents = []
+
+    for row_index, raw_row in enumerate(table_rows[1:], start=1):
+        row_values = [normalize_pdf_table_cell(cell) for cell in raw_row]
+        text = build_pdf_table_row_text(
+            page_number=page_number,
+            table_index=1,
+            row_index=row_index,
+            headers=headers,
+            row_values=row_values,
+        )
+
+        if not text:
+            continue
+
+        metadata = _build_pdf_base_metadata(
+            file_path=file_path,
+            page_number=page_number,
+        )
+        metadata.update(
+            {
+                "content_type": "table",
+                "table_index": 1,
+                "row_index": row_index,
+                "row_number": row_index,
+                "extraction_method": extraction_method,
+                "extraction_quality_score": quality_result.get("score"),
+                "ocr_confidence": ocr_confidence,
+                "human_review_required": False,
+            }
+        )
+        documents.append(Document(text=text, metadata=metadata))
+
+    return documents
+
+
 def load_excel_document(file_path: str) -> list[Document]:
     """
     读取 xlsx 文件，并按 sheet / row 转换成 Document 列表。
